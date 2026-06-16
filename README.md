@@ -11,6 +11,9 @@
 - **📊 Live usage** stats which show how much of your **weekly limit** you've used vs. the expected pace.
 - **🖥 A home-screen widget** — a glance-able card with the weekly percentage and
   a glowing progress bar.
+- **🎯 A widget pacing cue** (toggleable in Settings) — a faint "where you should
+  be" marker on the widget's bar at the point you've reached in the week, plus a
+  line telling you whether your live usage is *ahead of* or *under* that pace.
 
 ## Installing
 

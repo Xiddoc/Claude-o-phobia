@@ -169,6 +169,35 @@ fun SettingsScreen(
                 )
             }
 
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Widget pacing cue ---------------------------------------
+            InfoCard(title = "Widget pacing cue") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Show where I should be on the widget",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = settings.widgetPacingEnabled,
+                        onCheckedChange = { viewModel.setWidgetPacingEnabled(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Marks where a steady, evenly-paced week would put you — a " +
+                        "faint band on the widget's bar at the point you've reached in " +
+                        "the week, plus a line telling you whether your live usage is " +
+                        "ahead of or under that pace. Needs live usage to compare " +
+                        "against; until then the widget just shows the week elapsed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceMuted,
+                )
+            }
+
             Spacer(Modifier.height(24.dp))
 
             Text(
