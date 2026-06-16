@@ -2,7 +2,6 @@ package com.xiddoc.claudeophobia
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -76,7 +75,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun maybeRequestNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        // minSdk 34, so POST_NOTIFICATIONS is always a runtime permission.
         val granted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.POST_NOTIFICATIONS,
