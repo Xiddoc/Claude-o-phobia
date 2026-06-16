@@ -38,22 +38,27 @@ object ClaudeApi {
     class HttpException(val code: Int, message: String) : IOException(message)
 
     fun fetchUsage(orgId: String, cookieHeader: String): UsageSnapshot {
+        UsageLog.d("fetchUsage(): GET /api/organizations/{org}/usage for org ${UsageLog.redact(orgId)}")
         val body = httpGet("$BASE/api/organizations/$orgId/usage", cookieHeader)
         return parseUsage(body)
     }
 
     /** Best-effort discovery of an organization id when no cookie supplies one. */
     fun fetchFirstOrgId(cookieHeader: String): String? {
+        UsageLog.d("fetchFirstOrgId(): GET /api/organizations to discover an org id")
         val body = runCatching { httpGet("$BASE/api/organizations", cookieHeader) }
+            .onFailure { UsageLog.w("fetchFirstOrgId(): request failed", it) }
             .getOrNull() ?: return null
         return runCatching {
             val arr = JSONArray(body)
+            UsageLog.d("fetchFirstOrgId(): organizations payload listed ${arr.length()} org(s)")
             for (i in 0 until arr.length()) {
                 arr.optJSONObject(i)?.optString("uuid")?.takeIf { it.isNotBlank() }
                     ?.let { return it }
             }
             null
-        }.getOrNull()
+        }.onFailure { UsageLog.w("fetchFirstOrgId(): could not parse organizations payload", it) }
+            .getOrNull()
     }
 
     /** Parses the usage JSON into a snapshot. Visible for testing. */
@@ -100,14 +105,18 @@ object ClaudeApi {
             setRequestProperty("Referer", "$BASE/")
         }
         try {
+            UsageLog.d("httpGet(): GET $urlStr (Cookie header ${cookieHeader.length} chars)")
             val code = conn.responseCode
             if (code in 200..299) {
-                return conn.inputStream.bufferedReader().use { it.readText() }
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                UsageLog.d("httpGet(): $urlStr -> HTTP $code, ${body.length} byte body")
+                return body
             }
             val detail = conn.errorStream?.bufferedReader()?.use { it.readText() }
                 ?.take(180)
                 ?.replace(Regex("\\s+"), " ")
                 .orEmpty()
+            UsageLog.w("httpGet(): $urlStr -> HTTP $code; detail: $detail")
             throw HttpException(code, reasonFor(code, detail))
         } finally {
             conn.disconnect()

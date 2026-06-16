@@ -18,6 +18,15 @@ kind of anticipation. 🧡
   read your actual Claude usage and show:
   - how much of your **weekly limit** you've used (vs. the expected pace), and
   - how far along your **5-hour rolling window** is, including when it ends.
+- **A daily pacing nudge** — one friendly notification per day, at a random
+  moment between **10:00 and 18:00**, drawn from a big rotating pool of
+  encouraging messages ("Did you reach 65% usage yet this week?", "We're 93%
+  there to Thursday — final sprint!"). It fills in where a steady pace would
+  put you right now.
+- **A home-screen widget** — a glance-able card with the weekly percentage and
+  a glowing progress bar. It renders entirely from local schedule math (plus
+  the last cached live figure), so it **never** makes a usage request to
+  Claude.
 
 ## The root feature (read me)
 
@@ -40,8 +49,20 @@ weekly reset moment — with a one-tap "sync countdown to this" button so the
 timer matches reality.
 
 **Privacy:** your session cookie and org id are read into memory only for the
-duration of the request. They are **never** logged, cached, or written
-anywhere by this app. Root access is only ever used to *read* the cookie jar.
+duration of the request, and are never cached or written to disk. Root access
+is only ever used to *read* the cookie jar.
+
+**Debugging the root read:** the whole sequence is heavily traced under the
+`ClaudeUsage` logcat tag so you can see exactly where it fails (no root shell,
+no cookie file, which org id was used, the HTTP status, …):
+
+```bash
+adb logcat -s ClaudeUsage
+```
+
+Secrets are **redacted** before logging — a line will confirm "a 148-char
+sessionKey was present" without ever spelling the value out, and the raw cookie
+jar is never written to the log.
 
 The feature is **off by default**. If it can't find the cookie, you can change
 the **Claude package name** in Settings (default `com.anthropic.claude`). If

@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -65,30 +66,50 @@ fun InfoCard(
     }
 }
 
-/** A rounded, animated horizontal progress bar (0f..1f). */
+/**
+ * A rounded, animated horizontal progress bar (0f..1f).
+ *
+ * When [glow] is on, the filled portion casts a soft, warm clay-coloured glow
+ * (a coloured drop shadow) so the bar feels like it's lit from within.
+ */
 @Composable
 fun LinearMeter(
     progress: Float,
     modifier: Modifier = Modifier,
+    glow: Boolean = true,
 ) {
     val animated by animateFloatAsState(
         targetValue = progress.coerceIn(0f, 1f),
         label = "meter",
     )
+    val barShape = RoundedCornerShape(5.dp)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(10.dp)
-            .clip(RoundedCornerShape(5.dp))
+            .clip(barShape)
             .background(TrackColor),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(animated)
-                .height(10.dp)
-                .clip(RoundedCornerShape(5.dp))
-                .background(Brush.horizontalGradient(listOf(ClaudeClay, ClaudeClayBright))),
-        )
+        if (animated > 0f) {
+            val fillModifier = if (glow) {
+                Modifier.shadow(
+                    elevation = 8.dp,
+                    shape = barShape,
+                    clip = false,
+                    ambientColor = ClaudeClayBright,
+                    spotColor = ClaudeClay,
+                )
+            } else {
+                Modifier
+            }
+            Box(
+                modifier = fillModifier
+                    .fillMaxWidth(animated)
+                    .height(10.dp)
+                    .clip(barShape)
+                    .background(Brush.horizontalGradient(listOf(ClaudeClay, ClaudeClayBright))),
+            )
+        }
     }
 }
 

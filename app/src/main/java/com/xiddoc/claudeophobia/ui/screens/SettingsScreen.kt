@@ -142,7 +142,9 @@ fun SettingsScreen(
                 Text(
                     text = "Uses su to read your Claude session cookie, then asks " +
                         "claude.ai for your live usage — the same call the app makes. " +
-                        "The cookie stays on your device and is never logged or saved.",
+                        "The cookie stays on your device. The read is traced to logcat " +
+                        "(tag ClaudeUsage) for debugging, but secret values are always " +
+                        "redacted — never logged in full.",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceMuted,
                 )

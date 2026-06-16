@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -22,6 +24,37 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Daily pacing nudge: fires once a day at a random daytime moment. -->
+        <receiver
+            android:name=".notify.NudgeReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.xiddoc.claudeophobia.NUDGE_FIRE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Re-arms the nudge alarm after a reboot. -->
+        <receiver
+            android:name=".notify.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Home-screen widget (renders locally; never contacts Claude). -->
+        <receiver
+            android:name=".widget.UsageWidget"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/usage_widget_info" />
+        </receiver>
     </application>
 
 </manifest>

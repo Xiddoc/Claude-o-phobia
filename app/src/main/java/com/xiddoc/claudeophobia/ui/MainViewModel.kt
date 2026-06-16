@@ -8,6 +8,7 @@ import com.xiddoc.claudeophobia.data.ResetConfig
 import com.xiddoc.claudeophobia.data.RootResult
 import com.xiddoc.claudeophobia.data.RootUsageReader
 import com.xiddoc.claudeophobia.data.SettingsRepository
+import com.xiddoc.claudeophobia.widget.UsageWidget
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -56,7 +57,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             while (true) {
-                delay(60_000)
+                delay(BACKGROUND_REFRESH_MS)
                 if (settings.value.rootEnabled) refreshRoot()
             }
         }
@@ -72,7 +73,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (_rootResult.value !is RootResult.Found) {
                 _rootResult.value = RootResult.Idle
             }
-            _rootResult.value = RootUsageReader(current.claudePackage).read()
+            val result = RootUsageReader(current.claudePackage).read()
+            _rootResult.value = result
+            if (result is RootResult.Found) {
+                // Cache for the widget + daily nudge so neither makes its own
+                // request, and push the fresh figure to any placed widget.
+                repository.cacheLiveUsage(result.snapshot.weeklyUtilizationPercent)
+                UsageWidget.refresh(getApplication<Application>())
+            }
         }
     }
 
@@ -98,5 +106,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setClaudePackage(pkg: String) {
         viewModelScope.launch { repository.setClaudePackage(pkg) }
+    }
+
+    companion object {
+        // Gentle background cadence so we don't hammer Claude for usage. The
+        // widget and daily nudge reuse the cached figure rather than refetch.
+        private const val BACKGROUND_REFRESH_MS = 15 * 60 * 1000L
     }
 }

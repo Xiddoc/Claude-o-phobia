@@ -52,6 +52,19 @@ fun ProgressRing(
                 size = arcSize,
                 style = stroke,
             )
+            // Soft glow underlay — a wider, translucent clay arc beneath the
+            // progress so the ring looks gently lit.
+            if (animated > 0f) {
+                drawArc(
+                    color = ClaudeClay.copy(alpha = 0.30f),
+                    startAngle = -90f,
+                    sweepAngle = 360f * animated,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokeWidth.toPx() * 2.1f, cap = StrokeCap.Round),
+                )
+            }
             // Progress.
             drawArc(
                 brush = Brush.sweepGradient(listOf(ClaudeClay, ClaudeClayBright, ClaudeClay)),
