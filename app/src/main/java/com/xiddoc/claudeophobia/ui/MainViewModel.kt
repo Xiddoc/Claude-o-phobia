@@ -132,6 +132,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.setLiveUsageEnabled(enabled) }
     }
 
+    fun setFiveHourWindowEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.setFiveHourWindowEnabled(enabled) }
+    }
+
     /** Updates how often live usage is refreshed while the app is open. */
     fun setSyncIntervalMinutes(minutes: Int) {
         viewModelScope.launch { repository.setSyncIntervalMinutes(minutes) }

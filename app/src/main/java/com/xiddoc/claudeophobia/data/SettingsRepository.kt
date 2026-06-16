@@ -22,6 +22,8 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 data class AppSettings(
     val resetConfig: ResetConfig = ResetConfig(),
     val liveUsageEnabled: Boolean = false,
+    /** Whether the 5-hour rolling window card is shown on the home screen. */
+    val fiveHourWindowEnabled: Boolean = true,
     /**
      * How often, in minutes, to refresh live usage from Claude while the app is
      * open. The widget and daily nudge reuse the cached figure, so this only
@@ -87,6 +89,7 @@ class SettingsRepository(private val context: Context) {
                     ?: ZoneId.of("UTC"),
             ),
             liveUsageEnabled = prefs[KEY_LIVE_ENABLED] ?: false,
+            fiveHourWindowEnabled = prefs[KEY_FIVE_HOUR_ENABLED] ?: true,
             syncIntervalMinutes = prefs[KEY_SYNC_INTERVAL]
                 ?: AppSettings.DEFAULT_SYNC_INTERVAL_MINUTES,
             widgetPacingEnabled = prefs[KEY_WIDGET_PACING] ?: true,
@@ -149,6 +152,10 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_LIVE_ENABLED] = enabled }
     }
 
+    suspend fun setFiveHourWindowEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_FIVE_HOUR_ENABLED] = enabled }
+    }
+
     /** Sets how often live usage is refreshed while the app is open, in minutes. */
     suspend fun setSyncIntervalMinutes(minutes: Int) {
         context.dataStore.edit { it[KEY_SYNC_INTERVAL] = minutes.coerceAtLeast(1) }
@@ -164,6 +171,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_MINUTE = intPreferencesKey("reset_minute")
         private val KEY_ZONE = stringPreferencesKey("reset_zone")
         private val KEY_LIVE_ENABLED = booleanPreferencesKey("live_usage_enabled")
+        private val KEY_FIVE_HOUR_ENABLED = booleanPreferencesKey("five_hour_window_enabled")
         private val KEY_SYNC_INTERVAL = intPreferencesKey("sync_interval_minutes")
         private val KEY_WIDGET_PACING = booleanPreferencesKey("widget_pacing_enabled")
         private val KEY_COOKIE = stringPreferencesKey("live_cookie_header")
