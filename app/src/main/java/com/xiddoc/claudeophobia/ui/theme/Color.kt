@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.Color
 // Claude-inspired warm palette on a near-black canvas.
 val ClaudeClay = Color(0xFFD97757)       // primary accent (Claude's terracotta)
 val ClaudeClayBright = Color(0xFFE89A80)  // lighter accent for highlights
+val ClaudeGlow = Color(0xFFFFC8A6)        // hot, near-white warm core for LED-like glow
 
 val Background = Color(0xFF0F0E0C)
 val Surface = Color(0xFF1A1815)
