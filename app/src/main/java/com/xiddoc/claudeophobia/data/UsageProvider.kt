@@ -45,12 +45,16 @@ class UsageProvider : ContentProvider() {
             return null
         }
         val orgId = extras.getString(KEY_ORG)
+        val userAgent = extras.getString(KEY_USER_AGENT)
+        val clientVersion = extras.getString(KEY_CLIENT_VERSION)
         UsageLog.d(
             "UsageProvider.call(): storing credentials — cookie ${cookieHeader.length} chars, " +
-                "org ${UsageLog.redact(orgId)}"
+                "org ${UsageLog.redact(orgId)}, client version ${clientVersion ?: "(none)"}"
         )
 
-        runBlocking { SettingsRepository(ctx).publishCredentials(cookieHeader, orgId) }
+        runBlocking {
+            SettingsRepository(ctx).publishCredentials(cookieHeader, orgId, userAgent, clientVersion)
+        }
         UsageLog.d("UsageProvider.call(): credentials persisted")
 
         // Don't block the binder call from Claude on the network; refresh detached.
@@ -114,5 +118,7 @@ class UsageProvider : ContentProvider() {
 
         const val KEY_COOKIE = "cookie_header"
         const val KEY_ORG = "org_id"
+        const val KEY_USER_AGENT = "user_agent"
+        const val KEY_CLIENT_VERSION = "client_version"
     }
 }

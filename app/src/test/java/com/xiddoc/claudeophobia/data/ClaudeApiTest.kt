@@ -37,4 +37,16 @@ class ClaudeApiTest {
     fun snapshotReportsItHasData() {
         assertTrue(ClaudeApi.parseUsage(sample).hasAnything)
     }
+
+    @Test
+    fun pullsDeviceIdOutOfCookieHeader() {
+        val header = "sessionKey=sk-ant-sid02-abc; anthropic-device-id=3adb5dda-7c2a-41ae; lastActiveOrg=df0d"
+        assertEquals("3adb5dda-7c2a-41ae", ClaudeApi.deviceIdFrom(header))
+    }
+
+    @Test
+    fun deviceIdAbsentOrBlankYieldsNull() {
+        assertNull(ClaudeApi.deviceIdFrom("sessionKey=sk-ant; lastActiveOrg=df0d"))
+        assertNull(ClaudeApi.deviceIdFrom("anthropic-device-id=; sessionKey=sk-ant"))
+    }
 }

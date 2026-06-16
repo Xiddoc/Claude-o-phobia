@@ -6,6 +6,7 @@ import android.app.Instrumentation
 import android.content.Context
 import android.os.Binder
 import android.os.Bundle
+import com.xiddoc.claudeophobia.data.ClaudeClient
 import com.xiddoc.claudeophobia.data.ClaudePrefs
 import com.xiddoc.claudeophobia.data.UsageLog
 import com.xiddoc.claudeophobia.data.UsageProvider
@@ -230,12 +231,16 @@ class ClaudeHook : IXposedHookLoadPackage {
 
             val orgId = ClaudePrefs.readSelectedOrgId(dataDir)
                 ?: cookies["lastActiveOrg"]?.takeIf { it.isNotBlank() }
+
+            // Capture the app's own version so our replayed request can present the
+            // exact User-Agent Cloudflare's cf_clearance cookie is bound to.
+            val client = ClaudeClient.forVersion(ClaudeClient.versionNameOf(context))
             UsageLog.d(
                 "capture(): ${cookies.size} cookie(s), sessionKey ${UsageLog.redact(sessionKey)}, " +
-                    "org ${UsageLog.redact(orgId)} — publishing (force=$force)"
+                    "org ${UsageLog.redact(orgId)}, client ${client.clientVersion} — publishing (force=$force)"
             )
 
-            publish(context, cookieHeader, orgId)
+            publish(context, cookieHeader, orgId, client)
             lastCookieHash = hash
             lastPublishAt = now
         } catch (e: Throwable) {
@@ -244,10 +249,12 @@ class ClaudeHook : IXposedHookLoadPackage {
         }
     }
 
-    private fun publish(context: Context, cookieHeader: String, orgId: String?) {
+    private fun publish(context: Context, cookieHeader: String, orgId: String?, client: ClaudeClient) {
         val extras = Bundle().apply {
             putString(UsageProvider.KEY_COOKIE, cookieHeader)
             orgId?.let { putString(UsageProvider.KEY_ORG, it) }
+            putString(UsageProvider.KEY_USER_AGENT, client.userAgent)
+            putString(UsageProvider.KEY_CLIENT_VERSION, client.clientVersion)
         }
         val result = runCatching {
             context.contentResolver.call(
