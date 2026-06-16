@@ -52,6 +52,7 @@ fun CountdownScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val now by viewModel.now.collectAsStateWithLifecycle()
     val usageResult by viewModel.usageResult.collectAsStateWithLifecycle()
+    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
 
     val progress = settings.resetConfig.progress(now)
 
@@ -149,6 +150,7 @@ fun CountdownScreen(
             // Live usage captured by the LSPosed module (if enabled & available).
             LiveUsageSection(
                 usageResult = usageResult,
+                refreshing = refreshing,
                 expectedFraction = progress.fraction,
                 now = now,
                 configuredNextReset = progress.nextReset.toInstant(),
@@ -164,6 +166,7 @@ fun CountdownScreen(
 @Composable
 private fun LiveUsageSection(
     usageResult: UsageResult,
+    refreshing: Boolean,
     expectedFraction: Double,
     now: Instant,
     configuredNextReset: Instant,
@@ -185,7 +188,7 @@ private fun LiveUsageSection(
             Text("Reading your live usage…", color = OnSurfaceMuted)
         }
 
-        UsageResult.ModuleInactive -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry") {
+        UsageResult.ModuleInactive -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry", actionBusy = refreshing) {
             Text(
                 "The Claude-o-phobia LSPosed module isn't active. Enable it in the " +
                     "LSPosed manager, tick both Claude-o-phobia and Claude in its scope, " +
@@ -194,11 +197,11 @@ private fun LiveUsageSection(
             )
         }
 
-        is UsageResult.NotFound -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry") {
+        is UsageResult.NotFound -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry", actionBusy = refreshing) {
             Text(usageResult.detail, color = OnSurfaceMuted)
         }
 
-        is UsageResult.Error -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry") {
+        is UsageResult.Error -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry", actionBusy = refreshing) {
             Text(usageResult.message, color = MaterialTheme.colorScheme.error)
         }
 
@@ -208,6 +211,7 @@ private fun LiveUsageSection(
                 title = "Weekly usage (live)",
                 onAction = onRetry,
                 actionLabel = "Refresh",
+                actionBusy = refreshing,
             ) {
                 val actual = snap.weeklyUtilizationPercent
                 if (actual != null) {

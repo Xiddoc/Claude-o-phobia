@@ -39,6 +39,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _usageResult = MutableStateFlow<UsageResult>(UsageResult.Idle)
     val usageResult: StateFlow<UsageResult> = _usageResult.asStateFlow()
 
+    /**
+     * True while a refresh/retry is in flight. Surfaced in the UI as a spinner so
+     * a tap on Retry is always acknowledged — even when the read resolves
+     * instantly (e.g. no credentials yet) and the resulting card looks unchanged.
+     */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     init {
         // Live clock.
         viewModelScope.launch {
@@ -75,16 +83,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             UsageLog.d("refreshUsage(): triggered")
-            if (_usageResult.value !is UsageResult.Found) {
-                _usageResult.value = UsageResult.Idle
-            }
-            val result = reader.read(current, ModuleStatus.isActive())
-            _usageResult.value = result
-            if (result is UsageResult.Found) {
-                // Cache for the widget + daily nudge so neither makes its own
-                // request, and push the fresh figure to any placed widget.
-                repository.cacheLiveUsage(result.snapshot.weeklyUtilizationPercent)
-                UsageWidget.refresh(getApplication<Application>())
+            _refreshing.value = true
+            val startedAt = System.currentTimeMillis()
+            try {
+                if (_usageResult.value !is UsageResult.Found) {
+                    _usageResult.value = UsageResult.Idle
+                }
+                val result = reader.read(current, ModuleStatus.isActive())
+                _usageResult.value = result
+                if (result is UsageResult.Found) {
+                    // Cache for the widget + daily nudge so neither makes its own
+                    // request, and push the fresh figure to any placed widget.
+                    repository.cacheLiveUsage(result.snapshot.weeklyUtilizationPercent)
+                    UsageWidget.refresh(getApplication<Application>())
+                }
+            } finally {
+                // Hold the spinner just long enough to read as a deliberate retry
+                // even when the read returns immediately (e.g. no credentials).
+                val elapsed = System.currentTimeMillis() - startedAt
+                if (elapsed < MIN_SPINNER_MS) delay(MIN_SPINNER_MS - elapsed)
+                _refreshing.value = false
             }
         }
     }
@@ -113,5 +131,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Gentle background cadence so we don't hammer Claude for usage. The
         // widget and daily nudge reuse the cached figure rather than refetch.
         private const val BACKGROUND_REFRESH_MS = 15 * 60 * 1000L
+
+        // Minimum time the retry spinner stays up, so an instant result still
+        // gives the tap visible feedback.
+        private const val MIN_SPINNER_MS = 600L
     }
 }
