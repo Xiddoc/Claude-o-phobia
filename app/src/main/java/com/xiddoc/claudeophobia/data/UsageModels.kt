@@ -24,23 +24,30 @@ data class UsageSnapshot(
             fiveHourResetEpochMs != null
 }
 
-/** Result of attempting to read usage from the Claude app via root. */
-sealed interface RootResult {
-    /** Root usage reading is switched off in settings. */
-    data object Disabled : RootResult
+/**
+ * Result of surfacing the live Claude usage that the LSPosed module captures
+ * from inside the Claude app and hands to us.
+ */
+sealed interface UsageResult {
+    /** Live usage is switched off in settings. */
+    data object Disabled : UsageResult
 
-    /** No usable result yet (initial state / in-flight). */
-    data object Idle : RootResult
+    /** No usable result yet (initial state). */
+    data object Idle : UsageResult
 
-    /** `su` is unavailable or denied us a shell. */
-    data object NoRoot : RootResult
+    /**
+     * The Xposed module isn't active for this app — it hasn't hooked us, so it
+     * can't be hooking Claude either. The user needs to enable the module (and
+     * tick Claude-o-phobia + Claude in its scope) in the LSPosed manager.
+     */
+    data object ModuleInactive : UsageResult
 
-    /** Root works, but we couldn't locate Claude's usage data. */
-    data class NotFound(val detail: String) : RootResult
+    /** The module is active, but it hasn't captured any usage from Claude yet. */
+    data class NotFound(val detail: String) : UsageResult
 
-    /** Something blew up while shelling out. */
-    data class Error(val message: String) : RootResult
+    /** The module tried to read usage from Claude and reported a failure. */
+    data class Error(val message: String) : UsageResult
 
-    /** We found at least one usage value. */
-    data class Found(val snapshot: UsageSnapshot) : RootResult
+    /** We have a usage snapshot the module captured. */
+    data class Found(val snapshot: UsageSnapshot) : UsageResult
 }

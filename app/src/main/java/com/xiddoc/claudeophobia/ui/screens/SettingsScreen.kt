@@ -123,8 +123,8 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // ---- Root usage ----------------------------------------------
-            InfoCard(title = "Live usage via root") {
+            // ---- Live usage (LSPosed) ------------------------------------
+            InfoCard(title = "Live usage via LSPosed") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = "Read my real Claude usage",
@@ -133,45 +133,25 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                     )
                     Switch(
-                        checked = settings.rootEnabled,
-                        onCheckedChange = { viewModel.setRootEnabled(it) },
+                        checked = settings.liveUsageEnabled,
+                        onCheckedChange = { viewModel.setLiveUsageEnabled(it) },
                         colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
                     )
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Uses su to read your Claude session cookie, then asks " +
-                        "claude.ai for your live usage — the same call the app makes. " +
-                        "The cookie stays on your device. The read is traced to logcat " +
-                        "(tag ClaudeUsage) for debugging, but secret values are always " +
-                        "redacted — never logged in full.",
+                    text = "An LSPosed module runs inside the Claude app and hands this " +
+                        "app your Claude session, which it uses to ask claude.ai for your " +
+                        "live usage — the same call the app makes. The session stays on " +
+                        "your device.\n\n" +
+                        "Setup: enable the Claude-o-phobia module in the LSPosed manager, " +
+                        "tick both Claude-o-phobia and Claude in its scope, reboot, then " +
+                        "open Claude once so it can hand over your session.\n\n" +
+                        "Trouble? The whole flow is traced to logcat — filter by the tag " +
+                        "ClaudeUsage (secret values are redacted, never logged in full).",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceMuted,
                 )
-                if (settings.rootEnabled) {
-                    Spacer(Modifier.height(16.dp))
-                    var pkg by remember(settings.claudePackage) {
-                        mutableStateOf(settings.claudePackage)
-                    }
-                    OutlinedTextField(
-                        value = pkg,
-                        onValueChange = { pkg = it },
-                        label = { Text("Claude package name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                        androidx.compose.material3.TextButton(
-                            onClick = {
-                                viewModel.setClaudePackage(pkg)
-                                viewModel.refreshRoot()
-                            },
-                        ) {
-                            Text("Save & refresh", color = ClaudeClay)
-                        }
-                    }
-                }
             }
 
             Spacer(Modifier.height(24.dp))

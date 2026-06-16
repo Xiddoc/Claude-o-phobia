@@ -21,7 +21,7 @@ import java.util.Locale
  *
  * Crucially, the widget never talks to Claude. It renders the locally-computed
  * "percent of the week elapsed" (pure schedule math) and, when available, the
- * last live usage figure cached by the app from a previous root read. That way
+ * last live usage figure the LSPosed module captured from the Claude app. That way
  * it can sit on the home screen and refresh on a slow cadence without ever
  * generating a usage request.
  */

@@ -56,8 +56,9 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
-    implementation(libs.libsu.core)
-    implementation(libs.libsu.io)
+    // Xposed/LSPosed API: provided by the framework at runtime, so it's
+    // compileOnly and never packaged into our APK.
+    compileOnly(libs.xposed.api)
 
     testImplementation(libs.junit)
     testImplementation(libs.json)

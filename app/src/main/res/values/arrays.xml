@@ -1,0 +1,11 @@
+<resources>
+    <!--
+      Suggested LSPosed scope. The module needs to hook the Claude app (to read
+      usage) and Claude-o-phobia itself (so the app can tell the module is
+      active). Users can adjust this in the LSPosed manager.
+    -->
+    <string-array name="xposed_scope">
+        <item>com.anthropic.claude</item>
+        <item>com.xiddoc.claudeophobia</item>
+    </string-array>
+</resources>

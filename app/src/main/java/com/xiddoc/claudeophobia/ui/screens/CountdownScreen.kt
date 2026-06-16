@@ -29,7 +29,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.xiddoc.claudeophobia.data.RootResult
+import com.xiddoc.claudeophobia.data.UsageResult
 import com.xiddoc.claudeophobia.ui.MainViewModel
 import com.xiddoc.claudeophobia.ui.components.InfoCard
 import com.xiddoc.claudeophobia.ui.components.LinearMeter
@@ -51,7 +51,7 @@ fun CountdownScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val now by viewModel.now.collectAsStateWithLifecycle()
-    val rootResult by viewModel.rootResult.collectAsStateWithLifecycle()
+    val usageResult by viewModel.usageResult.collectAsStateWithLifecycle()
 
     val progress = settings.resetConfig.progress(now)
 
@@ -146,13 +146,13 @@ fun CountdownScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Live usage from root (if enabled & available).
-            RootUsageSection(
-                rootResult = rootResult,
+            // Live usage captured by the LSPosed module (if enabled & available).
+            LiveUsageSection(
+                usageResult = usageResult,
                 expectedFraction = progress.fraction,
                 now = now,
                 configuredNextReset = progress.nextReset.toInstant(),
-                onRetry = viewModel::refreshRoot,
+                onRetry = viewModel::refreshUsage,
                 onSync = viewModel::syncResetTo,
             )
 
@@ -162,47 +162,48 @@ fun CountdownScreen(
 }
 
 @Composable
-private fun RootUsageSection(
-    rootResult: RootResult,
+private fun LiveUsageSection(
+    usageResult: UsageResult,
     expectedFraction: Double,
     now: Instant,
     configuredNextReset: Instant,
     onRetry: () -> Unit,
     onSync: (Long) -> Unit,
 ) {
-    when (rootResult) {
-        RootResult.Disabled -> InfoCard(title = "Live usage (root)") {
+    when (usageResult) {
+        UsageResult.Disabled -> InfoCard(title = "Live usage (LSPosed)") {
             Text(
-                text = "Turn on root usage reading in settings to see your actual " +
-                    "weekly consumption and 5-hour window, pulled straight from the " +
-                    "Claude app.",
+                text = "Turn on live usage in settings to see your actual weekly " +
+                    "consumption and 5-hour window, captured straight from the Claude " +
+                    "app by the LSPosed module.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = OnSurfaceMuted,
             )
         }
 
-        RootResult.Idle -> InfoCard(title = "Live usage (root)") {
-            Text("Reading from the Claude app…", color = OnSurfaceMuted)
+        UsageResult.Idle -> InfoCard(title = "Live usage (LSPosed)") {
+            Text("Reading your live usage…", color = OnSurfaceMuted)
         }
 
-        RootResult.NoRoot -> InfoCard(title = "Live usage (root)", onAction = onRetry, actionLabel = "Retry") {
+        UsageResult.ModuleInactive -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry") {
             Text(
-                "Couldn't get a root shell. Grant this app superuser access in your " +
-                    "root manager, then retry.",
+                "The Claude-o-phobia LSPosed module isn't active. Enable it in the " +
+                    "LSPosed manager, tick both Claude-o-phobia and Claude in its scope, " +
+                    "then reboot and retry.",
                 color = OnSurfaceMuted,
             )
         }
 
-        is RootResult.NotFound -> InfoCard(title = "Live usage (root)", onAction = onRetry, actionLabel = "Retry") {
-            Text(rootResult.detail, color = OnSurfaceMuted)
+        is UsageResult.NotFound -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry") {
+            Text(usageResult.detail, color = OnSurfaceMuted)
         }
 
-        is RootResult.Error -> InfoCard(title = "Live usage (root)", onAction = onRetry, actionLabel = "Retry") {
-            Text(rootResult.message, color = MaterialTheme.colorScheme.error)
+        is UsageResult.Error -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry") {
+            Text(usageResult.message, color = MaterialTheme.colorScheme.error)
         }
 
-        is RootResult.Found -> {
-            val snap = rootResult.snapshot
+        is UsageResult.Found -> {
+            val snap = usageResult.snapshot
             InfoCard(
                 title = "Weekly usage (live)",
                 onAction = onRetry,

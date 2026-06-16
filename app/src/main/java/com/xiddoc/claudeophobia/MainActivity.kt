@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,6 +51,8 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     var showSettings by remember { mutableStateOf(false) }
+                    // System back leaves Settings instead of exiting the app.
+                    BackHandler(enabled = showSettings) { showSettings = false }
                     AnimatedContent(
                         targetState = showSettings,
                         transitionSpec = { fadeIn() togetherWith fadeOut() },

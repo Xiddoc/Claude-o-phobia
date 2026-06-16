@@ -21,17 +21,29 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 /** All user-tweakable settings, kept together for a single observable stream. */
 data class AppSettings(
     val resetConfig: ResetConfig = ResetConfig(),
-    val rootEnabled: Boolean = false,
-    val claudePackage: String = RootUsageReader.DEFAULT_PACKAGE,
+    val liveUsageEnabled: Boolean = false,
     /**
-     * Last live weekly utilization (0..100) read via root, cached so the widget
-     * and the daily nudge can show a real figure *without* hitting Claude again.
-     * Null until a successful root read has happened.
+     * The Claude session cookie header the LSPosed module captured from inside
+     * the Claude process and handed to us. The app forwards it to claude.ai to
+     * read live usage (the same call the app makes). Null until the module has
+     * captured it at least once.
+     */
+    val cookieHeader: String? = null,
+    /** The Claude organization id the module captured alongside the cookie. */
+    val orgId: String? = null,
+    /** When the module last refreshed the credentials (epoch millis), 0 if never. */
+    val credentialsCapturedAtMs: Long = 0L,
+    /**
+     * Last live weekly utilization (0..100) from a successful fetch, cached so the
+     * widget and the daily nudge can show a real figure without hitting Claude.
      */
     val lastWeeklyUsagePercent: Double? = null,
     /** When [lastWeeklyUsagePercent] was captured (epoch millis), or 0 if never. */
     val lastUsageTimestampMs: Long = 0L,
-)
+) {
+    /** Whether the module has handed us a usable session cookie yet. */
+    val hasCredentials: Boolean get() = !cookieHeader.isNullOrBlank()
+}
 
 class SettingsRepository(private val context: Context) {
 
@@ -46,15 +58,36 @@ class SettingsRepository(private val context: Context) {
                 zone = prefs[KEY_ZONE]?.let { runCatching { ZoneId.of(it) }.getOrNull() }
                     ?: ZoneId.of("UTC"),
             ),
-            rootEnabled = prefs[KEY_ROOT_ENABLED] ?: false,
-            claudePackage = prefs[KEY_CLAUDE_PKG] ?: RootUsageReader.DEFAULT_PACKAGE,
+            liveUsageEnabled = prefs[KEY_LIVE_ENABLED] ?: false,
+            cookieHeader = prefs[KEY_COOKIE],
+            orgId = prefs[KEY_ORG],
+            credentialsCapturedAtMs = prefs[KEY_CRED_AT] ?: 0L,
             lastWeeklyUsagePercent = prefs[KEY_LAST_WEEKLY_PCT],
             lastUsageTimestampMs = prefs[KEY_LAST_USAGE_TS] ?: 0L,
         )
     }
 
+    /**
+     * Stores the session credentials the LSPosed module captured. Called from the
+     * [UsageProvider] when the module publishes into our process.
+     */
+    suspend fun publishCredentials(
+        cookieHeader: String,
+        orgId: String?,
+        timestampMs: Long = System.currentTimeMillis(),
+    ) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_COOKIE] = cookieHeader
+            if (!orgId.isNullOrBlank()) prefs[KEY_ORG] = orgId else prefs.remove(KEY_ORG)
+            prefs[KEY_CRED_AT] = timestampMs
+        }
+    }
+
     /** Persists the most recent successful live read for the widget & nudge. */
-    suspend fun cacheLiveUsage(weeklyPercent: Double?, timestampMs: Long = System.currentTimeMillis()) {
+    suspend fun cacheLiveUsage(
+        weeklyPercent: Double?,
+        timestampMs: Long = System.currentTimeMillis(),
+    ) {
         context.dataStore.edit { prefs ->
             if (weeklyPercent != null) {
                 prefs[KEY_LAST_WEEKLY_PCT] = weeklyPercent
@@ -75,12 +108,8 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setRootEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[KEY_ROOT_ENABLED] = enabled }
-    }
-
-    suspend fun setClaudePackage(pkg: String) {
-        context.dataStore.edit { it[KEY_CLAUDE_PKG] = pkg.trim() }
+    suspend fun setLiveUsageEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_LIVE_ENABLED] = enabled }
     }
 
     companion object {
@@ -88,8 +117,10 @@ class SettingsRepository(private val context: Context) {
         private val KEY_HOUR = intPreferencesKey("reset_hour")
         private val KEY_MINUTE = intPreferencesKey("reset_minute")
         private val KEY_ZONE = stringPreferencesKey("reset_zone")
-        private val KEY_ROOT_ENABLED = booleanPreferencesKey("root_enabled")
-        private val KEY_CLAUDE_PKG = stringPreferencesKey("claude_package")
+        private val KEY_LIVE_ENABLED = booleanPreferencesKey("live_usage_enabled")
+        private val KEY_COOKIE = stringPreferencesKey("live_cookie_header")
+        private val KEY_ORG = stringPreferencesKey("live_org_id")
+        private val KEY_CRED_AT = longPreferencesKey("live_cred_captured_at")
         private val KEY_LAST_WEEKLY_PCT = doublePreferencesKey("last_weekly_pct")
         private val KEY_LAST_USAGE_TS = longPreferencesKey("last_usage_ts")
     }

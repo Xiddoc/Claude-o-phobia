@@ -14,8 +14,9 @@ import java.time.format.DateTimeParseException
  *   GET https://claude.ai/api/organizations/{orgId}/usage
  *
  * Authentication is whatever cookies we forward (most importantly the
- * `sessionKey`), which are read from the Claude app's own cookie jar via root —
- * this class never stores, logs, or hard-codes any of them.
+ * `sessionKey`), which the LSPosed module reads from the Claude app's own cookie
+ * jar inside its process — this class never stores, logs, or hard-codes any of
+ * them.
  *
  * Example response shape (no secrets in it):
  * {
