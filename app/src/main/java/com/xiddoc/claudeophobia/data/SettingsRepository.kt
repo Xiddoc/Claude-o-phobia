@@ -23,6 +23,12 @@ data class AppSettings(
     val resetConfig: ResetConfig = ResetConfig(),
     val liveUsageEnabled: Boolean = false,
     /**
+     * How often, in minutes, to refresh live usage from Claude while the app is
+     * open. The widget and daily nudge reuse the cached figure, so this only
+     * governs the in-app background cadence. Defaults to every 15 minutes.
+     */
+    val syncIntervalMinutes: Int = DEFAULT_SYNC_INTERVAL_MINUTES,
+    /**
      * The Claude session cookie header the LSPosed module captured from inside
      * the Claude process and handed to us. The app forwards it to claude.ai to
      * read live usage (the same call the app makes). Null until the module has
@@ -51,6 +57,14 @@ data class AppSettings(
 ) {
     /** Whether the module has handed us a usable session cookie yet. */
     val hasCredentials: Boolean get() = !cookieHeader.isNullOrBlank()
+
+    companion object {
+        /** Default in-app refresh cadence, in minutes. */
+        const val DEFAULT_SYNC_INTERVAL_MINUTES = 15
+
+        /** The cadences offered in Settings, in minutes. */
+        val SYNC_INTERVAL_OPTIONS = listOf(5, 15, 30, 60)
+    }
 }
 
 class SettingsRepository(private val context: Context) {
@@ -67,6 +81,8 @@ class SettingsRepository(private val context: Context) {
                     ?: ZoneId.of("UTC"),
             ),
             liveUsageEnabled = prefs[KEY_LIVE_ENABLED] ?: false,
+            syncIntervalMinutes = prefs[KEY_SYNC_INTERVAL]
+                ?: AppSettings.DEFAULT_SYNC_INTERVAL_MINUTES,
             cookieHeader = prefs[KEY_COOKIE],
             orgId = prefs[KEY_ORG],
             userAgent = prefs[KEY_USER_AGENT],
@@ -126,12 +142,18 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_LIVE_ENABLED] = enabled }
     }
 
+    /** Sets how often live usage is refreshed while the app is open, in minutes. */
+    suspend fun setSyncIntervalMinutes(minutes: Int) {
+        context.dataStore.edit { it[KEY_SYNC_INTERVAL] = minutes.coerceAtLeast(1) }
+    }
+
     companion object {
         private val KEY_DAY = intPreferencesKey("reset_day_of_week")
         private val KEY_HOUR = intPreferencesKey("reset_hour")
         private val KEY_MINUTE = intPreferencesKey("reset_minute")
         private val KEY_ZONE = stringPreferencesKey("reset_zone")
         private val KEY_LIVE_ENABLED = booleanPreferencesKey("live_usage_enabled")
+        private val KEY_SYNC_INTERVAL = intPreferencesKey("sync_interval_minutes")
         private val KEY_COOKIE = stringPreferencesKey("live_cookie_header")
         private val KEY_ORG = stringPreferencesKey("live_org_id")
         private val KEY_USER_AGENT = stringPreferencesKey("live_user_agent")
