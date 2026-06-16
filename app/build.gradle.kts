@@ -57,6 +57,7 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.libsu.core)
+    implementation(libs.libsu.io)
 
     testImplementation(libs.junit)
     testImplementation(libs.json)

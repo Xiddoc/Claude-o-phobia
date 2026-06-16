@@ -1,9 +1,13 @@
 package com.xiddoc.claudeophobia.data
 
 import com.topjohnwu.superuser.Shell
+import com.topjohnwu.superuser.io.SuFile
+import com.topjohnwu.superuser.io.SuFileInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.w3c.dom.Document
+import org.w3c.dom.Element
 import org.xml.sax.InputSource
 import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
@@ -19,13 +23,18 @@ import javax.xml.parsers.DocumentBuilderFactory
  * we have to ask the server. Credentials live only in memory for the duration
  * of the request; secret values are never written to logs (see [UsageLog]).
  *
- * Root commands run through libsu rather than a hand-rolled `ProcessBuilder("su",
- * "-c", …)`. The old approach span a fresh, non-interactive `su -c` shell per
- * command, and on Magisk that shell ran in a context where `find`/`grep` over
- * the target app's data dir silently failed (exit 1/2, no output) even though the
- * very same commands worked in an interactive `su` session. libsu keeps a single
- * persistent interactive root shell and pipes each command to it over stdin — the
- * same execution model as a real `su` session — so those reads now succeed.
+ * Filesystem access runs through libsu rather than a hand-rolled
+ * `ProcessBuilder("su", "-c", …)`. The old approach span a fresh, non-interactive
+ * `su -c` shell per command, and on Magisk that shell ran in a context where
+ * `find`/`grep` over the target app's data dir silently failed (exit 1/2, no
+ * output) even though the very same commands worked in an interactive `su`
+ * session. libsu keeps a single persistent interactive root shell, so those reads
+ * now succeed.
+ *
+ * On top of that shell we use libsu's `java.io.File`-shaped API ([SuFile] /
+ * [SuFileInputStream]) instead of stitching together `find`/`ls`/`cat` strings:
+ * we list the target app's `shared_prefs/` directory and read the files we want
+ * as streams. No shell metacharacters, globbing, or output parsing to get wrong.
  *
  * The whole sequence is heavily traced under the `ClaudeUsage` logcat tag so a
  * failing read can be diagnosed step-by-step:
@@ -68,18 +77,19 @@ class RootUsageReader(
         val cookieHeader = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
         UsageLog.d("read(): built Cookie header (${cookieHeader.length} chars, ${cookies.size} pairs)")
 
-        val orgFromCookie = cookies["lastActiveOrg"]?.takeIf { it.isNotBlank() }
-        if (orgFromCookie != null) {
-            UsageLog.d("read(): using lastActiveOrg from cookie -> ${UsageLog.redact(orgFromCookie)}")
-        } else {
-            UsageLog.d("read(): no lastActiveOrg cookie — discovering org id from /api/organizations")
-        }
-        val orgId = orgFromCookie
-            ?: ClaudeApi.fetchFirstOrgId(cookieHeader)
+        // Prefer the org the app itself has selected (account_prefs), then the
+        // lastActiveOrg cookie, and only then ask the server to enumerate orgs.
+        val orgId = readSelectedOrgId()
+            ?: cookies["lastActiveOrg"]?.takeIf { it.isNotBlank() }
+                ?.also { UsageLog.d("read(): using lastActiveOrg cookie -> ${UsageLog.redact(it)}") }
+            ?: run {
+                UsageLog.d("read(): no selected_org_id / lastActiveOrg — discovering org id from /api/organizations")
+                ClaudeApi.fetchFirstOrgId(cookieHeader)
+            }
             ?: run {
                 UsageLog.w("read(): could not determine an organization id — returning NotFound")
                 return@withContext RootResult.NotFound(
-                    "Couldn't determine your organization id from the cookies."
+                    "Couldn't determine your organization id."
                 )
             }
         UsageLog.d("read(): resolved org id -> ${UsageLog.redact(orgId)}")
@@ -122,44 +132,20 @@ class RootUsageReader(
     /**
      * Locates the cookie store and extracts name/value pairs. The Claude app
      * keeps its cookies in a standard Android SharedPreferences file named
-     * `shared_prefs/user_cookies_<accountId>.xml`, so we look there by name
-     * rather than grepping the data dir for a string that happens to be a
-     * session cookie. See [parseCookies] for the on-disk shape.
+     * `shared_prefs/user_cookies_<accountId>.xml`. See [parseCookies] for the
+     * on-disk shape.
      */
     private fun readCookieJar(): Map<String, String>? {
-        val dirs = listOf("/data/data/$packageName", "/data/user/0/$packageName")
-
-        // The cookie jar always lives in shared_prefs/ — check that exact path
-        // first. The shell expands the glob, so a real file path is what comes
-        // back (or nothing).
-        val sharedPrefsCmd = dirs.joinToString("; ") { dir ->
-            "ls '$dir'/shared_prefs/user_cookies_*.xml 2>/dev/null"
-        }
-        UsageLog.d("readCookieJar(): looking for shared_prefs/user_cookies_*.xml in ${dirs.joinToString(", ")}")
-        var file = firstNonEmptyLine(runSu(sharedPrefsCmd))
-        UsageLog.d("readCookieJar(): shared_prefs lookup -> ${file ?: "<none>"}")
-
-        // Fallback: a wider search by the same filename in case the on-disk
-        // layout differs (still by name — no content grep).
+        val file = findPrefsFile { it.startsWith("user_cookies_") && it.endsWith(".xml") }
         if (file == null) {
-            val findCmd = dirs.joinToString("; ") { dir ->
-                "find '$dir' -name 'user_cookies_*.xml' 2>/dev/null"
-            }
-            UsageLog.d("readCookieJar(): not under shared_prefs — widening to a name search")
-            file = firstNonEmptyLine(runSu(findCmd))
-            UsageLog.d("readCookieJar(): name search -> ${file ?: "<none>"}")
-        }
-        if (file == null) {
-            UsageLog.w("readCookieJar(): no cookie file located")
+            UsageLog.w("readCookieJar(): no user_cookies_*.xml under shared_prefs")
             return null
         }
-
-        val raw = runSu("cat '$file' 2>/dev/null")?.takeIf { it.isNotBlank() }
-        if (raw == null) {
-            UsageLog.w("readCookieJar(): `cat` of '$file' produced no content")
+        val raw = readTextAsRoot(file) ?: run {
+            UsageLog.w("readCookieJar(): '${file.path}' produced no content")
             return null
         }
-        UsageLog.d("readCookieJar(): read ${raw.length} chars from '$file'")
+        UsageLog.d("readCookieJar(): read ${raw.length} chars from '${file.path}'")
         val cookies = parseCookies(raw)
         UsageLog.d("readCookieJar(): extracted ${cookies.size} cookie pair(s)")
         return cookies.ifEmpty {
@@ -168,27 +154,56 @@ class RootUsageReader(
         }
     }
 
-    private fun firstNonEmptyLine(output: String?): String? =
-        output?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
+    /**
+     * Reads the org the Claude app currently has selected. It is stored as a
+     * plain `<string name="selected_org_id">…</string>` entry in
+     * `shared_prefs/account_prefs<accountId>.xml`.
+     */
+    private fun readSelectedOrgId(): String? {
+        val file = findPrefsFile { it.startsWith("account_prefs") && it.endsWith(".xml") }
+        if (file == null) {
+            UsageLog.d("readSelectedOrgId(): no account_prefs*.xml under shared_prefs")
+            return null
+        }
+        val raw = readTextAsRoot(file) ?: return null
+        val orgId = parsePrefString(raw, "selected_org_id")
+        if (orgId == null) {
+            UsageLog.d("readSelectedOrgId(): account_prefs had no selected_org_id")
+        } else {
+            UsageLog.d("readSelectedOrgId(): selected_org_id -> ${UsageLog.redact(orgId)}")
+        }
+        return orgId
+    }
+
+    // ---- libsu File helpers ----------------------------------------------
+
+    /** Candidate data dirs for the target app, primary first. */
+    private val dataDirs: List<String>
+        get() = listOf("/data/data/$packageName", "/data/user/0/$packageName")
 
     /**
-     * Runs [command] in libsu's shared root shell and returns its stdout as a
-     * single string (or null if the command couldn't be run / exited non-zero
-     * with no output). stderr is left out of the result on purpose — callers
-     * already redirect it with `2>/dev/null` — but we never log stdout itself,
-     * since it may hold the raw cookie jar.
+     * Finds the first file in the target app's `shared_prefs/` whose name
+     * satisfies [nameMatches]. Listing happens through libsu's root-backed
+     * [SuFile], so there's no shell command to escape or parse.
      */
-    private fun runSu(command: String): String? {
-        UsageLog.d("runSu(): exec ${command.take(160)}")
-        return try {
-            val result = Shell.cmd(command).exec()
-            val output = result.out.joinToString("\n")
-            UsageLog.d("runSu(): exit=${result.code}, read ${output.length} chars of output")
-            output.ifEmpty { null }
-        } catch (e: Exception) {
-            UsageLog.w("runSu(): command failed to run", e)
-            null
+    private fun findPrefsFile(nameMatches: (String) -> Boolean): SuFile? {
+        for (base in dataDirs) {
+            val prefsDir = SuFile(base, "shared_prefs")
+            if (!prefsDir.isDirectory) continue
+            val match = prefsDir.listFiles()?.firstOrNull { nameMatches(it.name) } ?: continue
+            UsageLog.d("findPrefsFile(): matched ${match.path}")
+            return SuFile(match.absolutePath)
         }
+        return null
+    }
+
+    /** Reads a root-owned file's text via [SuFileInputStream], or null. */
+    private fun readTextAsRoot(file: SuFile): String? = try {
+        SuFileInputStream.open(file).bufferedReader().use { it.readText() }
+            .takeIf { it.isNotBlank() }
+    } catch (e: Exception) {
+        UsageLog.w("readTextAsRoot(): couldn't read ${file.path}", e)
+        null
     }
 
     companion object {
@@ -237,20 +252,7 @@ class RootUsageReader(
          * Visible for testing.
          */
         internal fun parseCookies(raw: String): Map<String, String> {
-            val doc = try {
-                val factory = DocumentBuilderFactory.newInstance().apply {
-                    isNamespaceAware = false
-                    // Reading a local cookie jar never needs DOCTYPEs or
-                    // external entities; turn them off where supported.
-                    runCatching { setFeature(FEATURE_DISALLOW_DOCTYPE, true) }
-                    runCatching { setFeature(FEATURE_EXTERNAL_GENERAL, false) }
-                    runCatching { setFeature(FEATURE_EXTERNAL_PARAMETER, false) }
-                }
-                factory.newDocumentBuilder().parse(InputSource(StringReader(raw)))
-            } catch (_: Exception) {
-                return emptyMap()
-            }
-
+            val doc = parseXml(raw) ?: return emptyMap()
             val entries = doc.getElementsByTagName("string")
             val result = LinkedHashMap<String, String>()
             for (i in 0 until entries.length) {
@@ -266,6 +268,42 @@ class RootUsageReader(
                 }
             }
             return result
+        }
+
+        /**
+         * Reads a single `<string name="[key]">value</string>` entry out of a
+         * standard Android SharedPreferences XML document (the same `<map>`
+         * format as the cookie jar, but here the value is plain text — e.g.
+         * `selected_org_id` in `account_prefs*.xml`). Returns null when the key
+         * is absent or its value is blank.
+         *
+         * Visible for testing.
+         */
+        internal fun parsePrefString(raw: String, key: String): String? {
+            val doc = parseXml(raw) ?: return null
+            val entries = doc.getElementsByTagName("string")
+            for (i in 0 until entries.length) {
+                val el = entries.item(i) as? Element ?: continue
+                if (el.getAttribute("name") == key) {
+                    return el.textContent?.trim()?.takeIf { it.isNotEmpty() }
+                }
+            }
+            return null
+        }
+
+        /** Parses [raw] into a DOM, or null if it isn't well-formed XML. */
+        private fun parseXml(raw: String): Document? = try {
+            val factory = DocumentBuilderFactory.newInstance().apply {
+                isNamespaceAware = false
+                // Reading a local prefs file never needs DOCTYPEs or external
+                // entities; turn them off where supported.
+                runCatching { setFeature(FEATURE_DISALLOW_DOCTYPE, true) }
+                runCatching { setFeature(FEATURE_EXTERNAL_GENERAL, false) }
+                runCatching { setFeature(FEATURE_EXTERNAL_PARAMETER, false) }
+            }
+            factory.newDocumentBuilder().parse(InputSource(StringReader(raw)))
+        } catch (_: Exception) {
+            null
         }
 
         /**
