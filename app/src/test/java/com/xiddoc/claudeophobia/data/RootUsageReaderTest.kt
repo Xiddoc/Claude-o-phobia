@@ -2,10 +2,22 @@ package com.xiddoc.claudeophobia.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RootUsageReaderTest {
+
+    // Shape of the Claude app's shared_prefs/account_prefs<id>.xml. The
+    // selected_org_id is a fabricated UUID — only the structure is real.
+    private val sampleAccountPrefs = """
+        <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+        <map>
+            <boolean name="has_seen_intro" value="true" />
+            <string name="selected_org_id">00000000-1111-2222-3333-444444444444</string>
+            <long name="last_sync" value="1783903019000" />
+        </map>
+    """.trimIndent()
 
     // Shape of the Claude app's shared_prefs/user_cookies_*.xml cookie jar.
     // Every value here is fabricated — this only mirrors the *structure*:
@@ -48,5 +60,19 @@ class RootUsageReaderTest {
     fun returnsEmptyForGarbageInsteadOfThrowing() {
         assertTrue(RootUsageReader.parseCookies("not xml at all").isEmpty())
         assertTrue(RootUsageReader.parseCookies("").isEmpty())
+    }
+
+    @Test
+    fun readsSelectedOrgIdFromAccountPrefs() {
+        assertEquals(
+            "00000000-1111-2222-3333-444444444444",
+            RootUsageReader.parsePrefString(sampleAccountPrefs, "selected_org_id"),
+        )
+    }
+
+    @Test
+    fun prefStringIsNullForMissingKeyOrGarbage() {
+        assertNull(RootUsageReader.parsePrefString(sampleAccountPrefs, "not_a_key"))
+        assertNull(RootUsageReader.parsePrefString("not xml at all", "selected_org_id"))
     }
 }
