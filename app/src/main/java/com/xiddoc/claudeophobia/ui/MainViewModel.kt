@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -76,6 +78,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateResetConfig(config: ResetConfig) {
         viewModelScope.launch { repository.updateResetConfig(config) }
+    }
+
+    /** Aligns the manual countdown to a real reset instant from the live data. */
+    fun syncResetTo(epochMillis: Long) {
+        val zoned = Instant.ofEpochMilli(epochMillis).atZone(ZoneId.of("UTC"))
+        updateResetConfig(
+            ResetConfig(
+                dayOfWeek = zoned.dayOfWeek,
+                time = LocalTime.of(zoned.hour, zoned.minute),
+                zone = ZoneId.of("UTC"),
+            )
+        )
     }
 
     fun setRootEnabled(enabled: Boolean) {
