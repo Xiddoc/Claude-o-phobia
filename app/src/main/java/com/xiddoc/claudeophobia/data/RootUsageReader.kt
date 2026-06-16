@@ -3,6 +3,10 @@ package com.xiddoc.claudeophobia.data
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import org.xml.sax.InputSource
+import java.io.StringReader
+import javax.xml.parsers.DocumentBuilderFactory
 
 /**
  * Pulls live Claude usage by:
@@ -117,30 +121,35 @@ class RootUsageReader(
 
     /**
      * Locates the cookie store and extracts name/value pairs. The Claude app
-     * stores cookies as HTML-escaped JSON inside a `shared_prefs/user_cookies_*.xml`
-     * file, e.g. `...&quot;name&quot;:&quot;sessionKey&quot;,&quot;value&quot;:&quot;...&quot;...`
+     * keeps its cookies in a standard Android SharedPreferences file named
+     * `shared_prefs/user_cookies_<accountId>.xml`, so we look there by name
+     * rather than grepping the data dir for a string that happens to be a
+     * session cookie. See [parseCookies] for the on-disk shape.
      */
     private fun readCookieJar(): Map<String, String>? {
         val dirs = listOf("/data/data/$packageName", "/data/user/0/$packageName")
-        val findCmd = dirs.joinToString("; ") { dir ->
-            "find '$dir' -name 'user_cookies_*.xml' 2>/dev/null"
-        }
-        UsageLog.d("readCookieJar(): searching for user_cookies_*.xml in ${dirs.joinToString(", ")}")
-        var file = runSu(findCmd)?.lineSequence()
-            ?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
-        UsageLog.d("readCookieJar(): name-based find -> ${file ?: "<none>"}")
 
-        // Fallback: any file that actually contains a session cookie.
-        if (file.isNullOrEmpty()) {
-            val grepCmd = dirs.joinToString("; ") { dir ->
-                "grep -rIl 'sessionKey' '$dir' 2>/dev/null"
-            }
-            UsageLog.d("readCookieJar(): name-based find empty — falling back to grep for 'sessionKey'")
-            file = runSu(grepCmd)?.lineSequence()
-                ?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
-            UsageLog.d("readCookieJar(): grep fallback -> ${file ?: "<none>"}")
+        // The cookie jar always lives in shared_prefs/ — check that exact path
+        // first. The shell expands the glob, so a real file path is what comes
+        // back (or nothing).
+        val sharedPrefsCmd = dirs.joinToString("; ") { dir ->
+            "ls '$dir'/shared_prefs/user_cookies_*.xml 2>/dev/null"
         }
-        if (file.isNullOrEmpty()) {
+        UsageLog.d("readCookieJar(): looking for shared_prefs/user_cookies_*.xml in ${dirs.joinToString(", ")}")
+        var file = firstNonEmptyLine(runSu(sharedPrefsCmd))
+        UsageLog.d("readCookieJar(): shared_prefs lookup -> ${file ?: "<none>"}")
+
+        // Fallback: a wider search by the same filename in case the on-disk
+        // layout differs (still by name — no content grep).
+        if (file == null) {
+            val findCmd = dirs.joinToString("; ") { dir ->
+                "find '$dir' -name 'user_cookies_*.xml' 2>/dev/null"
+            }
+            UsageLog.d("readCookieJar(): not under shared_prefs — widening to a name search")
+            file = firstNonEmptyLine(runSu(findCmd))
+            UsageLog.d("readCookieJar(): name search -> ${file ?: "<none>"}")
+        }
+        if (file == null) {
             UsageLog.w("readCookieJar(): no cookie file located")
             return null
         }
@@ -159,24 +168,8 @@ class RootUsageReader(
         }
     }
 
-    /** Unescapes XML entities and pulls every {"name":...,"value":...} pair. */
-    private fun parseCookies(raw: String): Map<String, String> {
-        val unescaped = raw
-            .replace("&quot;", "\"")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&apos;", "'")
-        val result = LinkedHashMap<String, String>()
-        for (match in COOKIE_PAIR.findAll(unescaped)) {
-            val name = match.groupValues[1]
-            val value = match.groupValues[2]
-            if (name.isNotEmpty() && value.isNotEmpty() && '\n' !in value) {
-                result[name] = value
-            }
-        }
-        return result
-    }
+    private fun firstNonEmptyLine(output: String?): String? =
+        output?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
 
     /**
      * Runs [command] in libsu's shared root shell and returns its stdout as a
@@ -215,8 +208,80 @@ class RootUsageReader(
 
         private const val SHELL_TIMEOUT_SECONDS = 10L
 
-        // "name":"<cookie>","value":"<value>" — order as stored by the app.
-        private val COOKIE_PAIR =
-            Regex("\"name\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"value\"\\s*:\\s*\"([^\"]*)\"")
+        /**
+         * Parses the Claude app's `shared_prefs/user_cookies_*.xml` into cookie
+         * `name -> value` pairs.
+         *
+         * That file is a plain Android SharedPreferences map. Each cookie is one
+         * `<string>` entry whose (XML-escaped) text is a JSON object describing
+         * the cookie:
+         *
+         * ```
+         * <map>
+         *   <string name="https://claude.ai/|sessionKey">
+         *     {"name":"sessionKey","value":"sk-ant-…","expiresAt":…,"domain":"claude.ai",…}
+         *   </string>
+         *   …
+         * </map>
+         * ```
+         *
+         * We let a real XML parser do the entity unescaping and a real JSON
+         * parser read each entry, instead of regexing across `&quot;` boundaries
+         * and hoping we land on the right `"value"`. The pair we trust is the
+         * `name`/`value` *inside* the JSON — the element's `name=` attribute is
+         * only a `"<url>|<cookie>"` lookup key, not the cookie itself.
+         *
+         * Sentinel entries that carry no real cookie (e.g. an unset
+         * `sessionKeyV2` whose value is an empty `""`) are dropped.
+         *
+         * Visible for testing.
+         */
+        internal fun parseCookies(raw: String): Map<String, String> {
+            val doc = try {
+                val factory = DocumentBuilderFactory.newInstance().apply {
+                    isNamespaceAware = false
+                    // Reading a local cookie jar never needs DOCTYPEs or
+                    // external entities; turn them off where supported.
+                    runCatching { setFeature(FEATURE_DISALLOW_DOCTYPE, true) }
+                    runCatching { setFeature(FEATURE_EXTERNAL_GENERAL, false) }
+                    runCatching { setFeature(FEATURE_EXTERNAL_PARAMETER, false) }
+                }
+                factory.newDocumentBuilder().parse(InputSource(StringReader(raw)))
+            } catch (_: Exception) {
+                return emptyMap()
+            }
+
+            val entries = doc.getElementsByTagName("string")
+            val result = LinkedHashMap<String, String>()
+            for (i in 0 until entries.length) {
+                val json = entries.item(i).textContent?.trim().orEmpty()
+                if (json.isEmpty()) continue
+                runCatching {
+                    val obj = JSONObject(json)
+                    val name = obj.optString("name").trim()
+                    val value = obj.optString("value")
+                    if (name.isNotEmpty() && isUsableCookieValue(value)) {
+                        result[name] = value
+                    }
+                }
+            }
+            return result
+        }
+
+        /**
+         * An unset cookie is stored as an empty sentinel — e.g. `sessionKeyV2`
+         * has a JSON value of `""` (a string whose content is two quote
+         * characters) when there's nothing in it. Such entries carry no usable
+         * cookie, so we don't forward them.
+         */
+        private fun isUsableCookieValue(value: String): Boolean =
+            value.trim().trim('"').isNotEmpty()
+
+        private const val FEATURE_DISALLOW_DOCTYPE =
+            "http://apache.org/xml/features/disallow-doctype-decl"
+        private const val FEATURE_EXTERNAL_GENERAL =
+            "http://xml.org/sax/features/external-general-entities"
+        private const val FEATURE_EXTERNAL_PARAMETER =
+            "http://xml.org/sax/features/external-parameter-entities"
     }
 }
