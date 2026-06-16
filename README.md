@@ -2,7 +2,7 @@
 
 <p align="center"><em>An elegant Android app that counts down to your weekly Claude limit reset — because waiting for that fresh week of usage is the best kind of anticipation. 🧡</em></p>
 
-## What it shows
+## Features
 
 - **🕑 Live countdown** to the next weekly reset, inside a ring that fills up as
   the week elapses.
@@ -12,6 +12,9 @@
 - **🖥 A home-screen widget** — a glance-able card with the weekly percentage and
   a glowing progress bar.
 
+## Installing
+
+Grab the latest APK from [the Releases tab](https://github.com/Xiddoc/Claude-o-phobia/releases), and install it.
 
 ## Building
 
