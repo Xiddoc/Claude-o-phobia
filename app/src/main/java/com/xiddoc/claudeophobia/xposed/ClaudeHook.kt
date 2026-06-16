@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.Application
 import android.app.Instrumentation
 import android.content.Context
-import android.os.Binder
 import android.os.Bundle
 import com.xiddoc.claudeophobia.data.ClaudePrefs
 import com.xiddoc.claudeophobia.data.UsageLog
@@ -118,85 +117,87 @@ class ClaudeHook : IXposedHookLoadPackage {
     }
 
     /**
-     * Opens the two package-visibility gates a cross-app `ContentResolver.call`
-     * passes through in `getContentProviderImpl`, scoped tightly to *our* app:
+     * Makes [SELF_PACKAGE] resolvable from any process, regardless of the caller's
+     * `<queries>`, by hooking the package-visibility filter in the system server.
      *
-     *  1. **Authority resolution** — `PackageManagerService.resolveContentProvider`
-     *     filters by the caller's uid and can return null (→ "Unknown authority")
-     *     before any later check. For our authority we run it with the calling
-     *     identity cleared, so it resolves as the system would.
-     *  2. **Access filter** — `PackageManagerInternal.filterAppAccess` returns
-     *     `true` to *hide* a target package from a caller. For our package we force
-     *     `false` so the resolved provider isn't filtered back out.
+     * Every visibility decision (provider/authority resolution, `filterAppAccess`,
+     * intent queries, …) funnels through `AppsFilter.shouldFilterApplication`, so
+     * that's the one chokepoint we patch: whenever the *target* (or caller) is our
+     * package we force the result to `false` ("don't hide"). We also patch
+     * `PackageManagerInternal.filterAppAccess` directly as a cheap backstop. To
+     * keep the system-wide hot path cheap we only reflect on args that look like a
+     * package setting/state, and bail the moment we match.
      *
-     * Both hooks only react to our own authority/package, so the hot system-wide
-     * visibility path is left untouched.
+     * Class/method internals shifted across Android releases (the Android 14 PMS
+     * refactor in particular), so we try several class names and report how many
+     * methods we actually hooked to the LSPosed log — a `x0` there means the hook
+     * didn't attach on this ROM and is the first thing to check.
      */
     private fun installVisibilityBypass(classLoader: ClassLoader) {
         if (visibilityBypassInstalled) return
+
+        var appsFilterHooks = 0
+        for (name in APPS_FILTER_CLASSES) {
+            runCatching {
+                val cls = XposedHelpers.findClass(name, classLoader)
+                appsFilterHooks += XposedBridge.hookAllMethods(cls, "shouldFilterApplication", shouldFilterHook).size
+            }
+        }
+
+        var filterAppAccessHooks = 0
         runCatching {
-            // Gate 1: let our authority resolve regardless of the caller's uid.
-            val pms = XposedHelpers.findClass(
-                "com.android.server.pm.PackageManagerService",
-                classLoader,
-            )
-            val resolveHooks = XposedBridge.hookAllMethods(
-                pms,
-                "resolveContentProvider",
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
-                        if (param.args.firstOrNull() == SELF_AUTHORITY) {
-                            param.setObjectExtra(EXTRA_ID_TOKEN, Binder.clearCallingIdentity())
-                        }
-                    }
+            val pmiClass = XposedHelpers.findClass("android.content.pm.PackageManagerInternal", classLoader)
+            val localServices = XposedHelpers.findClass("com.android.server.LocalServices", classLoader)
+            XposedHelpers.callStaticMethod(localServices, "getService", pmiClass)?.let { pmi ->
+                filterAppAccessHooks = XposedBridge.hookAllMethods(pmi.javaClass, "filterAppAccess", filterAppAccessHook).size
+            }
+        }.onFailure { UsageLog.w("installVisibilityBypass(): filterAppAccess hook skipped: $it") }
 
-                    override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
-                        (param.getObjectExtra(EXTRA_ID_TOKEN) as? Long)?.let {
-                            Binder.restoreCallingIdentity(it)
-                        }
-                    }
-                },
-            )
+        visibilityBypassInstalled = appsFilterHooks > 0 || filterAppAccessHooks > 0
+        val report = "shouldFilterApplication x$appsFilterHooks, filterAppAccess x$filterAppAccessHooks"
+        UsageLog.d("installVisibilityBypass(): $report (installed=$visibilityBypassInstalled)")
+        XposedBridge.log(
+            if (visibilityBypassInstalled) {
+                "Claude-o-phobia: visibility bypass active — $report; $SELF_PACKAGE resolvable from any process"
+            } else {
+                "Claude-o-phobia: visibility bypass FAILED to attach ($report) — check the LSPosed scope/version"
+            }
+        )
+    }
 
-            // Gate 2: don't filter our package back out of the caller's view.
-            val pmiClass = XposedHelpers.findClass(
-                "android.content.pm.PackageManagerInternal",
-                classLoader,
-            )
-            val localServices = XposedHelpers.findClass(
-                "com.android.server.LocalServices",
-                classLoader,
-            )
-            val pmi = XposedHelpers.callStaticMethod(localServices, "getService", pmiClass)
-                ?: run {
-                    UsageLog.w("installVisibilityBypass(): PackageManagerInternal not registered yet")
+    /**
+     * Forces `shouldFilterApplication` to `false` ("don't hide") whenever our
+     * package is the caller or the target. Only objects that look like a package
+     * setting/state are probed, so we avoid throwing on the snapshot/int args.
+     */
+    private val shouldFilterHook = object : XC_MethodHook() {
+        override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
+            for (arg in param.args) {
+                if (arg == null) continue
+                val className = arg.javaClass.name
+                if (!className.contains("PackageSetting") &&
+                    !className.contains("PackageState") &&
+                    !className.contains("Setting")
+                ) continue
+                val pkg = runCatching { XposedHelpers.callMethod(arg, "getPackageName") as? String }.getOrNull()
+                if (pkg == SELF_PACKAGE) {
+                    param.result = false
                     return
                 }
-            val filterHooks = XposedBridge.hookAllMethods(
-                pmi.javaClass,
-                "filterAppAccess",
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
-                        // Only the (String packageName, …) overloads carry a target
-                        // we can match; the (int uid, …) ones leave args[0] non-String.
-                        if (param.args.firstOrNull() as? String == SELF_PACKAGE) {
-                            param.result = false
-                        }
-                    }
-                },
-            )
+            }
+        }
+    }
 
-            visibilityBypassInstalled = true
-            UsageLog.d(
-                "installVisibilityBypass(): hooked resolveContentProvider x${resolveHooks.size}, " +
-                    "filterAppAccess x${filterHooks.size} on ${pmi.javaClass.name}"
-            )
-            XposedBridge.log(
-                "Claude-o-phobia: visibility bypass active — $SELF_PACKAGE is now resolvable from any process"
-            )
-        }.onFailure {
-            UsageLog.e("installVisibilityBypass(): failed", it)
-            XposedBridge.log("Claude-o-phobia: installVisibilityBypass failed: $it")
+    /**
+     * Backstop on `PackageManagerInternal.filterAppAccess`. Only the
+     * `(String packageName, …)` overloads carry a target we can match; the
+     * `(int uid, …)` ones leave args[0] non-String and are left alone.
+     */
+    private val filterAppAccessHook = object : XC_MethodHook() {
+        override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
+            if (param.args.firstOrNull() as? String == SELF_PACKAGE) {
+                param.result = false
+            }
         }
     }
 
@@ -267,9 +268,15 @@ class ClaudeHook : IXposedHookLoadPackage {
 
     companion object {
         private const val SELF_PACKAGE = "com.xiddoc.claudeophobia"
-        private const val SELF_AUTHORITY = "$SELF_PACKAGE.usage"
-        private const val EXTRA_ID_TOKEN = "claudeophobia_id_token"
         private const val THROTTLE_MS = 60_000L
+
+        // The class that owns shouldFilterApplication moved across releases
+        // (AppsFilter pre-14; split into AppsFilterImpl/AppsFilterBase on 14+).
+        private val APPS_FILTER_CLASSES = arrayOf(
+            "com.android.server.pm.AppsFilterImpl",
+            "com.android.server.pm.AppsFilterBase",
+            "com.android.server.pm.AppsFilter",
+        )
 
         @Volatile private var lastPublishAt = 0L
         @Volatile private var lastCookieHash = 0
