@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class RootUsageReaderTest {
+class ClaudePrefsTest {
 
     // Shape of the Claude app's shared_prefs/account_prefs<id>.xml. The
     // selected_org_id is a fabricated UUID — only the structure is real.
@@ -35,7 +35,7 @@ class RootUsageReaderTest {
 
     @Test
     fun extractsCookieFromInnerJsonNotTheAttributeKey() {
-        val cookies = RootUsageReader.parseCookies(sampleJar)
+        val cookies = ClaudePrefs.parseCookies(sampleJar)
 
         // The key is the cookie's JSON `name`, not the "<url>|<cookie>" attribute.
         assertTrue("expected a sessionKey entry", cookies.containsKey("sessionKey"))
@@ -46,33 +46,42 @@ class RootUsageReaderTest {
 
     @Test
     fun dropsEmptySentinelCookies() {
-        val cookies = RootUsageReader.parseCookies(sampleJar)
+        val cookies = ClaudePrefs.parseCookies(sampleJar)
         assertFalse("unset sessionKeyV2 should be skipped", cookies.containsKey("sessionKeyV2"))
     }
 
     @Test
     fun preservesStoredOrder() {
-        val cookies = RootUsageReader.parseCookies(sampleJar)
+        val cookies = ClaudePrefs.parseCookies(sampleJar)
         assertEquals(listOf("sessionKey", "_cfuvid"), cookies.keys.toList())
     }
 
     @Test
+    fun buildsCookieHeaderFromPairs() {
+        val cookies = ClaudePrefs.parseCookies(sampleJar)
+        assertEquals(
+            "sessionKey=sk-ant-sid02-FAKEFAKEFAKE; _cfuvid=abc.def-1.0.1.1-not_a_real_value",
+            ClaudePrefs.cookieHeader(cookies),
+        )
+    }
+
+    @Test
     fun returnsEmptyForGarbageInsteadOfThrowing() {
-        assertTrue(RootUsageReader.parseCookies("not xml at all").isEmpty())
-        assertTrue(RootUsageReader.parseCookies("").isEmpty())
+        assertTrue(ClaudePrefs.parseCookies("not xml at all").isEmpty())
+        assertTrue(ClaudePrefs.parseCookies("").isEmpty())
     }
 
     @Test
     fun readsSelectedOrgIdFromAccountPrefs() {
         assertEquals(
             "00000000-1111-2222-3333-444444444444",
-            RootUsageReader.parsePrefString(sampleAccountPrefs, "selected_org_id"),
+            ClaudePrefs.parsePrefString(sampleAccountPrefs, "selected_org_id"),
         )
     }
 
     @Test
     fun prefStringIsNullForMissingKeyOrGarbage() {
-        assertNull(RootUsageReader.parsePrefString(sampleAccountPrefs, "not_a_key"))
-        assertNull(RootUsageReader.parsePrefString("not xml at all", "selected_org_id"))
+        assertNull(ClaudePrefs.parsePrefString(sampleAccountPrefs, "not_a_key"))
+        assertNull(ClaudePrefs.parsePrefString("not xml at all", "selected_org_id"))
     }
 }

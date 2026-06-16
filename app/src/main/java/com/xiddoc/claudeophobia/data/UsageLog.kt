@@ -3,8 +3,8 @@ package com.xiddoc.claudeophobia.data
 import android.util.Log
 
 /**
- * Centralised, intentionally-verbose logging for the "read live Claude usage
- * via root" sequence. Filter logcat by the [TAG] to watch the whole flow:
+ * Centralised, intentionally-verbose logging for the "read live Claude usage"
+ * sequence the LSPosed module runs. Filter logcat by the [TAG] to watch the flow:
  *
  * ```
  * adb logcat -s ClaudeUsage

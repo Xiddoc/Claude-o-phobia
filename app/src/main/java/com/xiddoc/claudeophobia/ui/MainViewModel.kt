@@ -4,18 +4,16 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xiddoc.claudeophobia.data.AppSettings
+import com.xiddoc.claudeophobia.data.LiveUsage
+import com.xiddoc.claudeophobia.data.ModuleStatus
 import com.xiddoc.claudeophobia.data.ResetConfig
-import com.xiddoc.claudeophobia.data.RootResult
-import com.xiddoc.claudeophobia.data.RootUsageReader
 import com.xiddoc.claudeophobia.data.SettingsRepository
-import com.xiddoc.claudeophobia.widget.UsageWidget
+import com.xiddoc.claudeophobia.data.UsageResult
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -33,8 +31,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _now = MutableStateFlow(Instant.now())
     val now: StateFlow<Instant> = _now.asStateFlow()
 
-    private val _rootResult = MutableStateFlow<RootResult>(RootResult.Idle)
-    val rootResult: StateFlow<RootResult> = _rootResult.asStateFlow()
+    private val _usageResult = MutableStateFlow<UsageResult>(UsageResult.Idle)
+    val usageResult: StateFlow<UsageResult> = _usageResult.asStateFlow()
 
     init {
         // Live clock.
@@ -45,44 +43,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Refresh root usage when the toggle / package changes, and on a
-        // gentle background cadence while enabled.
+        // The LSPosed module pushes fresh usage into our DataStore, so we just
+        // mirror whatever the latest settings say — no requests of our own.
         viewModelScope.launch {
-            settings
-                .map { it.rootEnabled to it.claudePackage }
-                .distinctUntilChanged()
-                .collect { (enabled, _) ->
-                    if (enabled) refreshRoot() else _rootResult.value = RootResult.Disabled
-                }
-        }
-        viewModelScope.launch {
-            while (true) {
-                delay(BACKGROUND_REFRESH_MS)
-                if (settings.value.rootEnabled) refreshRoot()
-            }
+            settings.collect { _usageResult.value = resolve(it) }
         }
     }
 
-    fun refreshRoot() {
-        val current = settings.value
-        if (!current.rootEnabled) {
-            _rootResult.value = RootResult.Disabled
-            return
-        }
-        viewModelScope.launch {
-            if (_rootResult.value !is RootResult.Found) {
-                _rootResult.value = RootResult.Idle
-            }
-            val result = RootUsageReader(current.claudePackage).read()
-            _rootResult.value = result
-            if (result is RootResult.Found) {
-                // Cache for the widget + daily nudge so neither makes its own
-                // request, and push the fresh figure to any placed widget.
-                repository.cacheLiveUsage(result.snapshot.weeklyUtilizationPercent)
-                UsageWidget.refresh(getApplication<Application>())
-            }
-        }
+    /** Re-evaluates the live-usage state (e.g. after the user taps Refresh). */
+    fun refreshUsage() {
+        _usageResult.value = resolve(settings.value)
     }
+
+    private fun resolve(s: AppSettings): UsageResult = LiveUsage.resolve(
+        enabled = s.liveUsageEnabled,
+        moduleActive = ModuleStatus.isActive(),
+        capturedAtMs = s.liveCapturedAtMs,
+        ok = s.liveOk,
+        error = s.liveError,
+        snapshot = s.liveSnapshot,
+    )
 
     fun updateResetConfig(config: ResetConfig) {
         viewModelScope.launch { repository.updateResetConfig(config) }
@@ -100,17 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun setRootEnabled(enabled: Boolean) {
-        viewModelScope.launch { repository.setRootEnabled(enabled) }
-    }
-
-    fun setClaudePackage(pkg: String) {
-        viewModelScope.launch { repository.setClaudePackage(pkg) }
-    }
-
-    companion object {
-        // Gentle background cadence so we don't hammer Claude for usage. The
-        // widget and daily nudge reuse the cached figure rather than refetch.
-        private const val BACKGROUND_REFRESH_MS = 15 * 60 * 1000L
+    fun setLiveUsageEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.setLiveUsageEnabled(enabled) }
     }
 }
