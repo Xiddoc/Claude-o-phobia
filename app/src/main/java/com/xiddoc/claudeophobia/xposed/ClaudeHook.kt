@@ -1,13 +1,14 @@
 package com.xiddoc.claudeophobia.xposed
 
+import android.app.Activity
 import android.app.Application
 import android.app.Instrumentation
+import android.content.Context
 import android.os.Bundle
-import com.xiddoc.claudeophobia.data.ClaudeApi
 import com.xiddoc.claudeophobia.data.ClaudePrefs
 import com.xiddoc.claudeophobia.data.ModuleStatus
+import com.xiddoc.claudeophobia.data.UsageLog
 import com.xiddoc.claudeophobia.data.UsageProvider
-import com.xiddoc.claudeophobia.data.UsageSnapshot
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XC_MethodReplacement
@@ -20,24 +21,31 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
  *
  * Two packages matter to us:
  *
- *  - **Our own app** — we hook [ModuleStatus.probe] to return `true`, which is
- *    how the app knows the module is actually active (see [ModuleStatus]).
- *  - **The Claude app** — once its `Application` is up, we read its cookie jar
- *    from *inside* the process (no root needed; the process owns the files),
- *    call the same `/usage` endpoint the app itself calls, and publish the
- *    resulting non-secret snapshot to our [UsageProvider]. The session cookie
- *    is used only for that one request and never leaves the Claude process.
+ *  - **Our own app** — we hook [ModuleStatus] so the app knows the module is
+ *    actually active.
+ *  - **The Claude app** — we read its session cookie + org id from *inside* the
+ *    process (no root needed; the process owns the files) and courier them to our
+ *    [UsageProvider]. We capture once when Claude's `Application` starts and again
+ *    whenever a Claude activity resumes, so the credentials our app uses to fetch
+ *    usage stay fresh. The app itself makes the `/usage` request.
+ *
+ * Everything is traced to logcat (tag `ClaudeUsage`) and the headline events to
+ * the Xposed/LSPosed log, so a broken capture can be diagnosed step by step.
  */
 class ClaudeHook : IXposedHookLoadPackage {
 
     override fun handleLoadPackage(lpparam: LoadPackageParam) {
         when (lpparam.packageName) {
-            SELF_PACKAGE -> hookSelf(lpparam)
-            // System apps never carry a Claude cookie jar, so it's cheap to let
-            // capture() decide; this keeps us working for renamed/cloned Claude
-            // packages the user has put in the module's scope.
-            "android" -> Unit
-            else -> hookClaude(lpparam)
+            SELF_PACKAGE -> {
+                XposedBridge.log("Claude-o-phobia: loaded into self ($SELF_PACKAGE) — marking module active")
+                hookSelf(lpparam)
+            }
+            // System apps never carry a Claude cookie jar, so skip the noise.
+            "android", "com.android.systemui" -> Unit
+            else -> {
+                XposedBridge.log("Claude-o-phobia: loaded into ${lpparam.packageName} — installing capture hooks")
+                hookClaude(lpparam)
+            }
         }
     }
 
@@ -53,7 +61,7 @@ class ClaudeHook : IXposedHookLoadPackage {
         }.onFailure { XposedBridge.log("Claude-o-phobia: self-hook failed: $it") }
     }
 
-    /** Capture usage once the (suspected) Claude app has finished starting up. */
+    /** Capture on Claude `Application` start and on every activity resume. */
     private fun hookClaude(lpparam: LoadPackageParam) {
         runCatching {
             XposedHelpers.findAndHookMethod(
@@ -63,9 +71,19 @@ class ClaudeHook : IXposedHookLoadPackage {
                 object : XC_MethodHook() {
                     override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
                         (param.args[0] as? Application)?.let { app ->
-                            // callApplicationOnCreate runs on the main thread; do
-                            // the disk + network work off it.
-                            Thread { capture(app) }.start()
+                            UsageLog.d("hook: Application.onCreate in ${lpparam.packageName}")
+                            Thread { capture(app, force = true) }.start()
+                        }
+                    }
+                },
+            )
+            XposedHelpers.findAndHookMethod(
+                Activity::class.java,
+                "onResume",
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
+                        (param.thisObject as? Activity)?.applicationContext?.let { ctx ->
+                            Thread { capture(ctx, force = false) }.start()
                         }
                     }
                 },
@@ -73,72 +91,76 @@ class ClaudeHook : IXposedHookLoadPackage {
         }.onFailure { XposedBridge.log("Claude-o-phobia: hook on ${lpparam.packageName} failed: $it") }
     }
 
-    private fun capture(app: Application) {
-        val cookies = ClaudePrefs.readCookies(app.dataDir)
-        if (cookies.isEmpty()) {
-            // No cookie jar here — almost certainly not the Claude app. Stay quiet.
-            return
-        }
-        val sessionKey = cookies["sessionKey"]
-        if (sessionKey.isNullOrBlank()) {
-            publishError(app, "Found Claude's cookie jar but no session — are you signed in?")
-            return
-        }
-
-        val cookieHeader = ClaudePrefs.cookieHeader(cookies)
-        val orgId = ClaudePrefs.readSelectedOrgId(app.dataDir)
-            ?: cookies["lastActiveOrg"]?.takeIf { it.isNotBlank() }
-            ?: ClaudeApi.fetchFirstOrgId(cookieHeader)
-        if (orgId == null) {
-            publishError(app, "Couldn't determine your Claude organization id.")
-            return
-        }
-
+    /**
+     * Reads Claude's cookie jar + selected org and publishes them to our app.
+     * [force] bypasses the throttle (used on process start); resume-driven calls
+     * are throttled and skipped when nothing changed.
+     */
+    private fun capture(context: Context, force: Boolean) {
         try {
-            val snapshot = ClaudeApi.fetchUsage(orgId, cookieHeader)
-            publishUsage(app, snapshot)
-            XposedBridge.log(
-                "Claude-o-phobia: published weekly=${snapshot.weeklyUtilizationPercent}%",
+            val dataDir = context.dataDir
+            val cookies = ClaudePrefs.readCookies(dataDir)
+            if (cookies.isEmpty()) {
+                // No cookie jar here — almost certainly not the Claude app. Stay quiet.
+                UsageLog.d("capture(): no cookie jar under ${dataDir.path}/shared_prefs — not Claude?")
+                return
+            }
+            val sessionKey = cookies["sessionKey"]
+            if (sessionKey.isNullOrBlank()) {
+                UsageLog.w("capture(): cookie jar present but sessionKey blank — signed out?")
+                return
+            }
+
+            val cookieHeader = ClaudePrefs.cookieHeader(cookies)
+            val now = System.currentTimeMillis()
+            val hash = cookieHeader.hashCode()
+            if (!force && hash == lastCookieHash && now - lastPublishAt < THROTTLE_MS) {
+                UsageLog.d("capture(): throttled (unchanged cookie, ${now - lastPublishAt}ms since last)")
+                return
+            }
+
+            val orgId = ClaudePrefs.readSelectedOrgId(dataDir)
+                ?: cookies["lastActiveOrg"]?.takeIf { it.isNotBlank() }
+            UsageLog.d(
+                "capture(): ${cookies.size} cookie(s), sessionKey ${UsageLog.redact(sessionKey)}, " +
+                    "org ${UsageLog.redact(orgId)} — publishing (force=$force)"
             )
-        } catch (e: ClaudeApi.HttpException) {
-            publishError(app, e.message ?: "Claude returned HTTP ${e.code}.")
-        } catch (e: Exception) {
-            publishError(app, "Network error: ${e.message ?: e.javaClass.simpleName}")
+
+            publish(context, cookieHeader, orgId)
+            lastCookieHash = hash
+            lastPublishAt = now
+        } catch (e: Throwable) {
+            UsageLog.e("capture(): unexpected failure", e)
+            XposedBridge.log("Claude-o-phobia: capture failed: $e")
         }
     }
 
-    private fun publishUsage(app: Application, snapshot: UsageSnapshot) {
+    private fun publish(context: Context, cookieHeader: String, orgId: String?) {
         val extras = Bundle().apply {
-            putBoolean(UsageProvider.KEY_OK, true)
-            snapshot.weeklyUtilizationPercent?.let { putDouble(UsageProvider.KEY_WEEKLY_PCT, it) }
-            snapshot.weeklyResetEpochMs?.let { putLong(UsageProvider.KEY_WEEKLY_RESET, it) }
-            snapshot.fiveHourUtilizationPercent?.let { putDouble(UsageProvider.KEY_FIVE_PCT, it) }
-            snapshot.fiveHourResetEpochMs?.let { putLong(UsageProvider.KEY_FIVE_RESET, it) }
-            snapshot.sourceLabel?.let { putString(UsageProvider.KEY_SOURCE, it) }
+            putString(UsageProvider.KEY_COOKIE, cookieHeader)
+            orgId?.let { putString(UsageProvider.KEY_ORG, it) }
         }
-        publish(app, extras)
-    }
-
-    private fun publishError(app: Application, detail: String) {
-        val extras = Bundle().apply {
-            putBoolean(UsageProvider.KEY_OK, false)
-            putString(UsageProvider.KEY_ERROR, detail)
-        }
-        publish(app, extras)
-    }
-
-    private fun publish(app: Application, extras: Bundle) {
-        runCatching {
-            app.contentResolver.call(
+        val result = runCatching {
+            context.contentResolver.call(
                 UsageProvider.CONTENT_URI,
                 UsageProvider.METHOD_PUBLISH,
                 null,
                 extras,
             )
-        }.onFailure { XposedBridge.log("Claude-o-phobia: publish failed: $it") }
+        }
+        result.onFailure {
+            UsageLog.e("publish(): contentResolver.call failed", it)
+            XposedBridge.log("Claude-o-phobia: publish failed: $it")
+        }.onSuccess {
+            UsageLog.d("publish(): handed credentials to ${UsageProvider.AUTHORITY}")
+        }
     }
 
     companion object {
         private const val SELF_PACKAGE = "com.xiddoc.claudeophobia"
+        private const val THROTTLE_MS = 60_000L
+
+        @Volatile private var lastPublishAt = 0L
+        @Volatile private var lastCookieHash = 0
     }
 }

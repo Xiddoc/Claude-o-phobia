@@ -182,7 +182,7 @@ private fun LiveUsageSection(
         }
 
         UsageResult.Idle -> InfoCard(title = "Live usage (LSPosed)") {
-            Text("Waiting for the module…", color = OnSurfaceMuted)
+            Text("Reading your live usage…", color = OnSurfaceMuted)
         }
 
         UsageResult.ModuleInactive -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry") {

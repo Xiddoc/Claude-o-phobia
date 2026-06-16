@@ -2,7 +2,6 @@ package com.xiddoc.claudeophobia.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
@@ -24,23 +23,26 @@ data class AppSettings(
     val resetConfig: ResetConfig = ResetConfig(),
     val liveUsageEnabled: Boolean = false,
     /**
-     * The last usage the LSPosed module captured from inside the Claude app and
-     * published to us. It carries only non-secret figures (percentages + reset
-     * times) — the session cookie never leaves the Claude process.
+     * The Claude session cookie header the LSPosed module captured from inside
+     * the Claude process and handed to us. The app forwards it to claude.ai to
+     * read live usage (the same call the app makes). Null until the module has
+     * captured it at least once.
      */
-    val liveSnapshot: UsageSnapshot = UsageSnapshot(),
-    /** When [liveSnapshot] / [liveError] was published (epoch millis), 0 if never. */
-    val liveCapturedAtMs: Long = 0L,
-    /** Whether the most recent capture succeeded. */
-    val liveOk: Boolean = false,
-    /** Failure detail from the most recent capture, if it failed. */
-    val liveError: String? = null,
+    val cookieHeader: String? = null,
+    /** The Claude organization id the module captured alongside the cookie. */
+    val orgId: String? = null,
+    /** When the module last refreshed the credentials (epoch millis), 0 if never. */
+    val credentialsCapturedAtMs: Long = 0L,
+    /**
+     * Last live weekly utilization (0..100) from a successful fetch, cached so the
+     * widget and the daily nudge can show a real figure without hitting Claude.
+     */
+    val lastWeeklyUsagePercent: Double? = null,
+    /** When [lastWeeklyUsagePercent] was captured (epoch millis), or 0 if never. */
+    val lastUsageTimestampMs: Long = 0L,
 ) {
-    /** Weekly utilization (0..100) from the last capture, for the widget & nudge. */
-    val lastWeeklyUsagePercent: Double? get() = liveSnapshot.weeklyUtilizationPercent
-
-    /** When the cached figure was captured, or 0 if never. */
-    val lastUsageTimestampMs: Long get() = liveCapturedAtMs
+    /** Whether the module has handed us a usable session cookie yet. */
+    val hasCredentials: Boolean get() = !cookieHeader.isNullOrBlank()
 }
 
 class SettingsRepository(private val context: Context) {
@@ -57,45 +59,43 @@ class SettingsRepository(private val context: Context) {
                     ?: ZoneId.of("UTC"),
             ),
             liveUsageEnabled = prefs[KEY_LIVE_ENABLED] ?: false,
-            liveSnapshot = UsageSnapshot(
-                weeklyUtilizationPercent = prefs[KEY_WEEKLY_PCT],
-                weeklyResetEpochMs = prefs[KEY_WEEKLY_RESET],
-                fiveHourUtilizationPercent = prefs[KEY_FIVE_PCT],
-                fiveHourResetEpochMs = prefs[KEY_FIVE_RESET],
-                sourceLabel = prefs[KEY_SOURCE],
-            ),
-            liveCapturedAtMs = prefs[KEY_CAPTURED_AT] ?: 0L,
-            liveOk = prefs[KEY_LIVE_OK] ?: false,
-            liveError = prefs[KEY_LIVE_ERROR],
+            cookieHeader = prefs[KEY_COOKIE],
+            orgId = prefs[KEY_ORG],
+            credentialsCapturedAtMs = prefs[KEY_CRED_AT] ?: 0L,
+            lastWeeklyUsagePercent = prefs[KEY_LAST_WEEKLY_PCT],
+            lastUsageTimestampMs = prefs[KEY_LAST_USAGE_TS] ?: 0L,
         )
     }
 
-    /** Stores a successful capture published by the LSPosed module. */
-    suspend fun publishUsage(
-        snapshot: UsageSnapshot,
+    /**
+     * Stores the session credentials the LSPosed module captured. Called from the
+     * [UsageProvider] when the module publishes into our process.
+     */
+    suspend fun publishCredentials(
+        cookieHeader: String,
+        orgId: String?,
         timestampMs: Long = System.currentTimeMillis(),
     ) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_LIVE_OK] = true
-            prefs.remove(KEY_LIVE_ERROR)
-            prefs[KEY_CAPTURED_AT] = timestampMs
-            prefs.setOrRemove(KEY_WEEKLY_PCT, snapshot.weeklyUtilizationPercent)
-            prefs.setOrRemove(KEY_WEEKLY_RESET, snapshot.weeklyResetEpochMs)
-            prefs.setOrRemove(KEY_FIVE_PCT, snapshot.fiveHourUtilizationPercent)
-            prefs.setOrRemove(KEY_FIVE_RESET, snapshot.fiveHourResetEpochMs)
-            prefs.setOrRemove(KEY_SOURCE, snapshot.sourceLabel)
+            prefs[KEY_COOKIE] = cookieHeader
+            if (!orgId.isNullOrBlank()) prefs[KEY_ORG] = orgId else prefs.remove(KEY_ORG)
+            prefs[KEY_CRED_AT] = timestampMs
         }
     }
 
-    /** Records that the module tried to capture usage but failed. */
-    suspend fun publishError(
-        detail: String,
+    /** Persists the most recent successful live read for the widget & nudge. */
+    suspend fun cacheLiveUsage(
+        weeklyPercent: Double?,
         timestampMs: Long = System.currentTimeMillis(),
     ) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_LIVE_OK] = false
-            prefs[KEY_LIVE_ERROR] = detail
-            prefs[KEY_CAPTURED_AT] = timestampMs
+            if (weeklyPercent != null) {
+                prefs[KEY_LAST_WEEKLY_PCT] = weeklyPercent
+                prefs[KEY_LAST_USAGE_TS] = timestampMs
+            } else {
+                prefs.remove(KEY_LAST_WEEKLY_PCT)
+                prefs.remove(KEY_LAST_USAGE_TS)
+            }
         }
     }
 
@@ -118,18 +118,10 @@ class SettingsRepository(private val context: Context) {
         private val KEY_MINUTE = intPreferencesKey("reset_minute")
         private val KEY_ZONE = stringPreferencesKey("reset_zone")
         private val KEY_LIVE_ENABLED = booleanPreferencesKey("live_usage_enabled")
-        private val KEY_WEEKLY_PCT = doublePreferencesKey("live_weekly_pct")
-        private val KEY_WEEKLY_RESET = longPreferencesKey("live_weekly_reset_ms")
-        private val KEY_FIVE_PCT = doublePreferencesKey("live_five_pct")
-        private val KEY_FIVE_RESET = longPreferencesKey("live_five_reset_ms")
-        private val KEY_SOURCE = stringPreferencesKey("live_source")
-        private val KEY_CAPTURED_AT = longPreferencesKey("live_captured_at")
-        private val KEY_LIVE_OK = booleanPreferencesKey("live_ok")
-        private val KEY_LIVE_ERROR = stringPreferencesKey("live_error")
+        private val KEY_COOKIE = stringPreferencesKey("live_cookie_header")
+        private val KEY_ORG = stringPreferencesKey("live_org_id")
+        private val KEY_CRED_AT = longPreferencesKey("live_cred_captured_at")
+        private val KEY_LAST_WEEKLY_PCT = doublePreferencesKey("last_weekly_pct")
+        private val KEY_LAST_USAGE_TS = longPreferencesKey("last_usage_ts")
     }
-}
-
-/** Writes [value] under [key], or clears the key when [value] is null. */
-private fun <T : Any> MutablePreferences.setOrRemove(key: Preferences.Key<T>, value: T?) {
-    if (value != null) set(key, value) else remove(key)
 }

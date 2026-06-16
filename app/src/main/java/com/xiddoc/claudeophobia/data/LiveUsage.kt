@@ -1,28 +1,27 @@
 package com.xiddoc.claudeophobia.data
 
 /**
- * Maps the persisted "last thing the LSPosed module told us" plus the live
- * module-active signal onto a [UsageResult] for the UI. Pure and Android-free so
- * it can be unit-tested directly (see `LiveUsageTest`).
+ * The Android-free part of deciding what to show for live usage: everything
+ * that can be settled *without* making a network request. Kept pure so it can be
+ * unit-tested directly (see `LiveUsageTest`).
  */
 object LiveUsage {
 
-    fun resolve(
+    /**
+     * Classifies the state when we are *not* going to fetch. Returns null when we
+     * do have credentials and should go ahead and hit the network (the caller
+     * then maps the fetch onto [UsageResult.Found] / [UsageResult.Error]).
+     */
+    fun preFetchState(
         enabled: Boolean,
+        hasCredentials: Boolean,
         moduleActive: Boolean,
-        capturedAtMs: Long,
-        ok: Boolean,
-        error: String?,
-        snapshot: UsageSnapshot,
-    ): UsageResult = when {
+    ): UsageResult? = when {
         !enabled -> UsageResult.Disabled
-        !moduleActive -> UsageResult.ModuleInactive
-        capturedAtMs <= 0L -> UsageResult.NotFound(
-            "The module is active — open the Claude app once so it can capture your usage."
+        hasCredentials -> null
+        moduleActive -> UsageResult.NotFound(
+            "The module is active — open the Claude app once so it can hand over your session."
         )
-        !ok -> UsageResult.Error(
-            error ?: "The module couldn't read your usage from Claude."
-        )
-        else -> UsageResult.Found(snapshot)
+        else -> UsageResult.ModuleInactive
     }
 }

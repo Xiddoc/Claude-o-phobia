@@ -140,14 +140,15 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "An LSPosed module runs inside the Claude app, reads your " +
-                        "session from its own storage, and asks claude.ai for your live " +
-                        "usage — the same call the app makes. Only the resulting " +
-                        "percentages come back to this app; your session cookie never " +
-                        "leaves the Claude process.\n\n" +
+                    text = "An LSPosed module runs inside the Claude app and hands this " +
+                        "app your Claude session, which it uses to ask claude.ai for your " +
+                        "live usage — the same call the app makes. The session stays on " +
+                        "your device.\n\n" +
                         "Setup: enable the Claude-o-phobia module in the LSPosed manager, " +
                         "tick both Claude-o-phobia and Claude in its scope, reboot, then " +
-                        "open Claude once so it can capture your usage.",
+                        "open Claude once so it can hand over your session.\n\n" +
+                        "Trouble? The whole flow is traced to logcat — filter by the tag " +
+                        "ClaudeUsage (secret values are redacted, never logged in full).",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceMuted,
                 )
