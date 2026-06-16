@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.xiddoc.claudeophobia.data.AppSettings
 import com.xiddoc.claudeophobia.data.ResetConfig
 import com.xiddoc.claudeophobia.ui.MainViewModel
 import com.xiddoc.claudeophobia.ui.components.InfoCard
@@ -138,6 +139,19 @@ fun SettingsScreen(
                         colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
                     )
                 }
+                if (settings.liveUsageEnabled) {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "Sync usage every",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    SyncIntervalPicker(
+                        selected = settings.syncIntervalMinutes,
+                        onSelected = { viewModel.setSyncIntervalMinutes(it) },
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "An LSPosed module runs inside the Claude app and hands this " +
@@ -165,6 +179,33 @@ fun SettingsScreen(
             )
 
             Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SyncIntervalPicker(
+    selected: Int,
+    onSelected: (Int) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AppSettings.SYNC_INTERVAL_OPTIONS.forEach { minutes ->
+            FilterChip(
+                selected = minutes == selected,
+                onClick = { onSelected(minutes) },
+                label = {
+                    Text(
+                        text = if (minutes < 60) "$minutes min" else "${minutes / 60} hr",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                modifier = Modifier.weight(1f),
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = ClaudeClay,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            )
         }
     }
 }

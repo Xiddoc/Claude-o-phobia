@@ -70,7 +70,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             while (true) {
-                delay(BACKGROUND_REFRESH_MS)
+                val intervalMs = settings.value.syncIntervalMinutes
+                    .coerceAtLeast(1) * 60_000L
+                delay(intervalMs)
                 if (settings.value.liveUsageEnabled) refreshUsage()
             }
         }
@@ -130,6 +132,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.setLiveUsageEnabled(enabled) }
     }
 
+    /** Updates how often live usage is refreshed while the app is open. */
+    fun setSyncIntervalMinutes(minutes: Int) {
+        viewModelScope.launch { repository.setSyncIntervalMinutes(minutes) }
+    }
+
     /**
      * Launches the Claude app. Opening it makes the module re-run its capture
      * (on Application start / activity resume), which is how a session reaches us
@@ -148,10 +155,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
-        // Gentle background cadence so we don't hammer Claude for usage. The
-        // widget and daily nudge reuse the cached figure rather than refetch.
-        private const val BACKGROUND_REFRESH_MS = 15 * 60 * 1000L
-
         // Minimum time the retry spinner stays up, so an instant result still
         // gives the tap visible feedback.
         private const val MIN_SPINNER_MS = 600L
