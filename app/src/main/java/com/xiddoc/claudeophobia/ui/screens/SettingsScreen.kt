@@ -140,9 +140,9 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Uses su to read usage data from the Claude app's private " +
-                        "storage. Best-effort — the app's on-device format is " +
-                        "undocumented, so values may be missing if it changes.",
+                    text = "Uses su to read your Claude session cookie, then asks " +
+                        "claude.ai for your live usage — the same call the app makes. " +
+                        "The cookie stays on your device and is never logged or saved.",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceMuted,
                 )

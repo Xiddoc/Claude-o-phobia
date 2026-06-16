@@ -21,27 +21,32 @@ kind of anticipation. 🧡
 
 ## The root feature (read me)
 
-The Claude Android app does **not** publish a documented, stable on-device
-format for usage / rate-limit state. So the root reader is deliberately
-**best-effort**:
+The Claude app doesn't cache usage on disk — it asks the server for it. So this
+app does the same thing the official client does, just on your behalf:
 
-1. It uses `su` to grep the Claude app's private storage
-   (`/data/data/<package>`) for JSON that looks like rate-limit data.
-2. It heuristically matches keys that resemble utilization percentages and
-   reset timestamps (see the `*_HINTS` regexes in
-   [`RootUsageReader.kt`](app/src/main/java/com/xiddoc/claudeophobia/data/RootUsageReader.kt)).
+1. It uses `su` to read the Claude app's **cookie jar**
+   (`shared_prefs/user_cookies_*.xml`) and pull out the `sessionKey` cookie
+   (plus your `lastActiveOrg`), see
+   [`RootUsageReader.kt`](app/src/main/java/com/xiddoc/claudeophobia/data/RootUsageReader.kt).
+2. It then calls
+   `GET https://claude.ai/api/organizations/{org}/usage`, forwarding those
+   cookies, and parses the JSON (`seven_day.utilization`,
+   `five_hour.utilization`, `resets_at`, …) — see
+   [`ClaudeApi.kt`](app/src/main/java/com/xiddoc/claudeophobia/data/ClaudeApi.kt).
 
-If Anthropic changes how the app stores this data, some live values may go
-missing — the countdown and week-percentage features keep working regardless.
-You can:
+From that you get your real weekly utilization (compared against the expected
+pace), the 5-hour rolling window's progress and end time, and the **actual**
+weekly reset moment — with a one-tap "sync countdown to this" button so the
+timer matches reality.
 
-- Change the **Claude package name** in Settings (default
-  `com.anthropic.claude`).
-- Tune the `WEEKLY_HINTS` / `FIVE_HOUR_HINTS` / `USAGE_HINTS` / `RESET_HINTS`
-  regexes if you inspect your own app data and find the real key names.
+**Privacy:** your session cookie and org id are read into memory only for the
+duration of the request. They are **never** logged, cached, or written
+anywhere by this app. Root access is only ever used to *read* the cookie jar.
 
-Root reading is **off by default** and only ever reads — it never writes to
-the Claude app.
+The feature is **off by default**. If it can't find the cookie, you can change
+the **Claude package name** in Settings (default `com.anthropic.claude`). If
+Claude rejects the request (e.g. an expired session or Cloudflare), the app
+tells you the HTTP status so you can retry after opening the Claude app.
 
 ## Building
 

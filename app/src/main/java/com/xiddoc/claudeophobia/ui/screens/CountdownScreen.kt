@@ -18,6 +18,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -150,7 +151,9 @@ fun CountdownScreen(
                 rootResult = rootResult,
                 expectedFraction = progress.fraction,
                 now = now,
+                configuredNextReset = progress.nextReset.toInstant(),
                 onRetry = viewModel::refreshRoot,
+                onSync = viewModel::syncResetTo,
             )
 
             Spacer(Modifier.height(32.dp))
@@ -163,7 +166,9 @@ private fun RootUsageSection(
     rootResult: RootResult,
     expectedFraction: Double,
     now: Instant,
+    configuredNextReset: Instant,
     onRetry: () -> Unit,
+    onSync: (Long) -> Unit,
 ) {
     when (rootResult) {
         RootResult.Disabled -> InfoCard(title = "Live usage (root)") {
@@ -223,50 +228,64 @@ private fun RootUsageSection(
                     )
                 } else {
                     Text(
-                        "Found Claude data, but no weekly percentage in it yet.",
+                        "Connected to Claude, but no weekly percentage was returned.",
                         color = OnSurfaceMuted,
                     )
                 }
-                snap.sourceLabel?.let {
-                    Spacer(Modifier.height(8.dp))
+
+                // The API tells us the real reset moment — offer to align the
+                // countdown to it when it differs from the configured one.
+                snap.weeklyResetEpochMs?.let { resetMs ->
+                    val resetInstant = Instant.ofEpochMilli(resetMs)
+                    val resetZoned = resetInstant.atZone(java.time.ZoneId.of("UTC"))
+                    Spacer(Modifier.height(12.dp))
                     Text(
-                        "source: $it",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "Actual reset: " + formatResetMoment(resetZoned),
+                        style = MaterialTheme.typography.bodySmall,
                         color = OnSurfaceMuted,
                     )
+                    val driftMs = kotlin.math.abs(resetMs - configuredNextReset.toEpochMilli())
+                    if (driftMs > 60_000) {
+                        TextButton(onClick = { onSync(resetMs) }) {
+                            Text("Sync countdown to this", color = ClaudeClay)
+                        }
+                    }
                 }
             }
 
             // 5-hour rolling window.
             val end = snap.fiveHourResetEpochMs
             val fiveUtil = snap.fiveHourUtilizationPercent
-            if (end != null || fiveUtil != null) {
-                Spacer(Modifier.height(16.dp))
-                InfoCard(title = "5-hour rolling window") {
-                    if (end != null) {
-                        val endInstant = Instant.ofEpochMilli(end)
-                        val windowStart = endInstant.minus(Duration.ofHours(5))
-                        val elapsed = Duration.between(windowStart, now).toMillis()
-                            .coerceAtLeast(0)
-                        val frac = (elapsed.toDouble() / Duration.ofHours(5).toMillis())
-                            .coerceIn(0.0, 1.0)
-                        StatRow(
-                            label = "Window progress",
-                            value = formatPercent(frac),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        LinearMeter(progress = frac.toFloat())
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Window ends " + formatRelative(endInstant, now),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = OnSurfaceMuted,
-                        )
-                    }
-                    if (fiveUtil != null) {
-                        Spacer(Modifier.height(8.dp))
-                        StatRow(label = "Used in window", value = "${fiveUtil.toInt()}%")
-                    }
+            Spacer(Modifier.height(16.dp))
+            InfoCard(title = "5-hour rolling window") {
+                if (fiveUtil != null) {
+                    StatRow(label = "Used in window", value = "${fiveUtil.toInt()}%")
+                }
+                if (end != null) {
+                    val endInstant = Instant.ofEpochMilli(end)
+                    val windowStart = endInstant.minus(Duration.ofHours(5))
+                    val elapsed = Duration.between(windowStart, now).toMillis()
+                        .coerceAtLeast(0)
+                    val frac = (elapsed.toDouble() / Duration.ofHours(5).toMillis())
+                        .coerceIn(0.0, 1.0)
+                    Spacer(Modifier.height(10.dp))
+                    StatRow(label = "Window progress", value = formatPercent(frac))
+                    Spacer(Modifier.height(8.dp))
+                    LinearMeter(progress = frac.toFloat())
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Window ends " + formatRelative(endInstant, now),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceMuted,
+                    )
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "No active 5-hour window right now — it starts the moment you " +
+                            "send your next message to Claude.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceMuted,
+                    )
                 }
             }
         }
