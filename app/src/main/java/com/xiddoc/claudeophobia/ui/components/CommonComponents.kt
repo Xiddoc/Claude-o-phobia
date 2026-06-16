@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,13 +37,19 @@ import com.xiddoc.claudeophobia.ui.theme.ClaudeGlow
 import com.xiddoc.claudeophobia.ui.theme.OnSurfaceMuted
 import com.xiddoc.claudeophobia.ui.theme.TrackColor
 
-/** Rounded surface card with a header, optional inline action, and content. */
+/**
+ * Rounded surface card with a header, optional inline action, and content.
+ *
+ * When [actionBusy] is true the inline action is replaced by a small spinner, so
+ * tapping Retry/Refresh is always acknowledged even if the result is unchanged.
+ */
 @Composable
 fun InfoCard(
     title: String,
     modifier: Modifier = Modifier,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    actionBusy: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Card(
@@ -60,7 +68,15 @@ fun InfoCard(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
-                if (actionLabel != null && onAction != null) {
+                if (actionBusy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .padding(end = 12.dp)
+                            .size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = ClaudeClay,
+                    )
+                } else if (actionLabel != null && onAction != null) {
                     TextButton(onClick = onAction) {
                         Text(actionLabel, color = ClaudeClay)
                     }

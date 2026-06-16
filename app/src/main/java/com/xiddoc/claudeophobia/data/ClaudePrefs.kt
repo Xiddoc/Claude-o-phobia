@@ -28,12 +28,38 @@ object ClaudePrefs {
      * Reads the Claude session cookies out of the app's own `shared_prefs`. Runs
      * inside the hooked Claude process, so [dataDir] is `context.dataDir` and the
      * files are directly readable.
+     *
+     * A signed-in Claude install keeps *several* `user_cookies_*.xml` jars side by
+     * side — the pre-login flow (`user_cookies_login*.xml`), any staging host, and
+     * the actual signed-in account (`user_cookies_<accountId>.xml`). Only the last
+     * carries a real `sessionKey`, and `listFiles()` returns them in an undefined
+     * order, so we must not just grab the first match: doing so used to land on the
+     * login jar, parse to nothing, and make us conclude "not Claude". Instead we
+     * parse every jar and return the one that actually holds a session, preferring
+     * the production account jar over staging/login when more than one qualifies.
+     * When none holds a session we still return the best non-empty jar so the
+     * caller can tell "signed out" apart from "no jar at all".
      */
     fun readCookies(dataDir: File): Map<String, String> {
-        val jar = findPrefsFile(dataDir) {
+        val parsed = findPrefsFiles(dataDir) {
             it.startsWith("user_cookies_") && it.endsWith(".xml")
-        } ?: return emptyMap()
-        return parseCookies(jar.readText())
+        }
+            .map { it.name to parseCookies(it.readText()) }
+            .filter { (_, cookies) -> cookies.isNotEmpty() }
+            .sortedBy { (name, _) -> jarPriority(name) }
+        return parsed.firstOrNull { (_, cookies) -> !cookies["sessionKey"].isNullOrBlank() }?.second
+            ?: parsed.firstOrNull()?.second
+            ?: emptyMap()
+    }
+
+    /**
+     * Ranks cookie-jar filenames so the signed-in production account jar wins over
+     * the pre-login flow jar and any staging host jar. Lower sorts first.
+     */
+    private fun jarPriority(name: String): Int = when {
+        name.contains("login") -> 2
+        name.contains("staging") || name.contains(":--") -> 1
+        else -> 0
     }
 
     /** Reads the org the Claude app currently has selected, if any. */
@@ -48,10 +74,13 @@ object ClaudePrefs {
     fun cookieHeader(cookies: Map<String, String>): String =
         cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
 
-    private fun findPrefsFile(dataDir: File, nameMatches: (String) -> Boolean): File? {
+    private fun findPrefsFile(dataDir: File, nameMatches: (String) -> Boolean): File? =
+        findPrefsFiles(dataDir, nameMatches).firstOrNull()
+
+    private fun findPrefsFiles(dataDir: File, nameMatches: (String) -> Boolean): List<File> {
         val prefsDir = File(dataDir, "shared_prefs")
-        if (!prefsDir.isDirectory) return null
-        return prefsDir.listFiles()?.firstOrNull { it.isFile && nameMatches(it.name) }
+        if (!prefsDir.isDirectory) return emptyList()
+        return prefsDir.listFiles()?.filter { it.isFile && nameMatches(it.name) }.orEmpty()
     }
 
     // ---- parsing (shared, unit-tested) -----------------------------------
