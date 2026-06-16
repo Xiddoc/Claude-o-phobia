@@ -1,9 +1,11 @@
 package com.xiddoc.claudeophobia.ui
 
 import android.app.Application
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xiddoc.claudeophobia.data.AppSettings
+import com.xiddoc.claudeophobia.data.ClaudePrefs
 import com.xiddoc.claudeophobia.data.LiveUsageReader
 import com.xiddoc.claudeophobia.data.ModuleStatus
 import com.xiddoc.claudeophobia.data.ResetConfig
@@ -89,7 +91,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (_usageResult.value !is UsageResult.Found) {
                     _usageResult.value = UsageResult.Idle
                 }
-                val result = reader.read(current, ModuleStatus.isActive())
+                val rebootNeeded = ModuleStatus.rebootNeededSinceUpdate(getApplication())
+                val result = reader.read(current, rebootNeeded)
                 _usageResult.value = result
                 if (result is UsageResult.Found) {
                     // Cache for the widget + daily nudge so neither makes its own
@@ -125,6 +128,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLiveUsageEnabled(enabled: Boolean) {
         viewModelScope.launch { repository.setLiveUsageEnabled(enabled) }
+    }
+
+    /**
+     * Launches the Claude app. Opening it makes the module re-run its capture
+     * (on Application start / activity resume), which is how a session reaches us
+     * in the first place — so this doubles as a "hand over my session now" button.
+     */
+    fun openClaude() {
+        val app = getApplication<Application>()
+        val intent = app.packageManager.getLaunchIntentForPackage(ClaudePrefs.CLAUDE_PACKAGE)
+        if (intent == null) {
+            UsageLog.w("openClaude(): Claude app not installed or not visible to us")
+            return
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { app.startActivity(intent) }
+            .onFailure { UsageLog.e("openClaude(): failed to launch Claude", it) }
     }
 
     companion object {

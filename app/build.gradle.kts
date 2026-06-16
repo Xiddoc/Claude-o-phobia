@@ -10,7 +10,9 @@ android {
 
     defaultConfig {
         applicationId = "com.xiddoc.claudeophobia"
-        minSdk = 26
+        // Android 14+ only: the LSPosed visibility bridge hooks system-server
+        // internals, so we focus on modern, well-understood platform versions.
+        minSdk = 34
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"

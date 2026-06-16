@@ -11,28 +11,26 @@ class LiveUsageTest {
     fun disabledWhenToggleOff() {
         assertEquals(
             UsageResult.Disabled,
-            LiveUsage.preFetchState(enabled = false, hasCredentials = true, moduleActive = true),
+            LiveUsage.preFetchState(enabled = false, hasCredentials = true, rebootNeeded = false),
         )
     }
 
     @Test
-    fun fetchesWhenCredentialsPresentRegardlessOfModuleProbe() {
+    fun fetchesWhenCredentialsPresentRegardlessOfReboot() {
         // Credentials prove the module worked, so we proceed to fetch (null) even
-        // if the in-app module probe couldn't confirm activation.
-        assertNull(LiveUsage.preFetchState(enabled = true, hasCredentials = true, moduleActive = false))
+        // if a reboot looks pending — clearly it isn't really needed.
+        assertNull(LiveUsage.preFetchState(enabled = true, hasCredentials = true, rebootNeeded = true))
     }
 
     @Test
-    fun notFoundWhenActiveButNoCredentialsYet() {
-        val state = LiveUsage.preFetchState(enabled = true, hasCredentials = false, moduleActive = true)
+    fun rebootRequiredWhenNoCredentialsAndUpdatedSinceBoot() {
+        val state = LiveUsage.preFetchState(enabled = true, hasCredentials = false, rebootNeeded = true)
+        assertTrue(state is UsageResult.RebootRequired)
+    }
+
+    @Test
+    fun notFoundWhenNoCredentialsButAlreadyRebooted() {
+        val state = LiveUsage.preFetchState(enabled = true, hasCredentials = false, rebootNeeded = false)
         assertTrue(state is UsageResult.NotFound)
-    }
-
-    @Test
-    fun moduleInactiveWhenNoCredentialsAndProbeFalse() {
-        assertEquals(
-            UsageResult.ModuleInactive,
-            LiveUsage.preFetchState(enabled = true, hasCredentials = false, moduleActive = false),
-        )
     }
 }

@@ -144,9 +144,10 @@ fun SettingsScreen(
                         "app your Claude session, which it uses to ask claude.ai for your " +
                         "live usage — the same call the app makes. The session stays on " +
                         "your device.\n\n" +
-                        "Setup: enable the Claude-o-phobia module in the LSPosed manager, " +
-                        "tick both Claude-o-phobia and Claude in its scope, reboot, then " +
-                        "open Claude once so it can hand over your session.\n\n" +
+                        "Setup: enable the Claude-o-phobia module in the LSPosed manager " +
+                        "and, in its scope, tick Claude and System Framework (you can't tick " +
+                        "Claude-o-phobia itself — a module never appears in its own scope). " +
+                        "Reboot, then open Claude once so it can hand over your session.\n\n" +
                         "Trouble? The whole flow is traced to logcat — filter by the tag " +
                         "ClaudeUsage (secret values are redacted, never logged in full).",
                     style = MaterialTheme.typography.bodySmall,

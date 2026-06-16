@@ -19,17 +19,17 @@ import kotlinx.coroutines.withContext
  */
 class LiveUsageReader {
 
-    suspend fun read(settings: AppSettings, moduleActive: Boolean): UsageResult =
+    suspend fun read(settings: AppSettings, rebootNeeded: Boolean): UsageResult =
         withContext(Dispatchers.IO) {
             UsageLog.d(
                 "read(): enabled=${settings.liveUsageEnabled} hasCredentials=${settings.hasCredentials} " +
-                    "moduleActive=$moduleActive credAgeMs=${ageOf(settings.credentialsCapturedAtMs)}"
+                    "rebootNeeded=$rebootNeeded credAgeMs=${ageOf(settings.credentialsCapturedAtMs)}"
             )
 
             LiveUsage.preFetchState(
                 enabled = settings.liveUsageEnabled,
                 hasCredentials = settings.hasCredentials,
-                moduleActive = moduleActive,
+                rebootNeeded = rebootNeeded,
             )?.let { early ->
                 UsageLog.d("read(): no fetch — returning ${early.javaClass.simpleName}")
                 return@withContext early
