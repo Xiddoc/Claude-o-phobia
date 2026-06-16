@@ -36,13 +36,12 @@ sealed interface UsageResult {
     data object Idle : UsageResult
 
     /**
-     * The Xposed module isn't active for this app — it hasn't hooked us, so it
-     * can't be hooking Claude either. The user needs to enable the module (and
-     * tick Claude-o-phobia + Claude in its scope) in the LSPosed manager.
+     * The module was installed/updated but the device hasn't rebooted since, so
+     * LSPosed hasn't injected it yet. A reboot is needed before anything works.
      */
-    data object ModuleInactive : UsageResult
+    data class RebootRequired(val detail: String) : UsageResult
 
-    /** The module is active, but it hasn't captured any usage from Claude yet. */
+    /** No session captured yet — likely the user just needs to open Claude. */
     data class NotFound(val detail: String) : UsageResult
 
     /** The module tried to read usage from Claude and reported a failure. */

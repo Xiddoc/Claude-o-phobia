@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -155,6 +156,7 @@ fun CountdownScreen(
                 now = now,
                 configuredNextReset = progress.nextReset.toInstant(),
                 onRetry = viewModel::refreshUsage,
+                onOpenClaude = viewModel::openClaude,
                 onSync = viewModel::syncResetTo,
             )
 
@@ -171,6 +173,7 @@ private fun LiveUsageSection(
     now: Instant,
     configuredNextReset: Instant,
     onRetry: () -> Unit,
+    onOpenClaude: () -> Unit,
     onSync: (Long) -> Unit,
 ) {
     when (usageResult) {
@@ -188,17 +191,16 @@ private fun LiveUsageSection(
             Text("Reading your live usage…", color = OnSurfaceMuted)
         }
 
-        UsageResult.ModuleInactive -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry", actionBusy = refreshing) {
-            Text(
-                "The Claude-o-phobia LSPosed module isn't active. Enable it in the " +
-                    "LSPosed manager, tick both Claude-o-phobia and Claude in its scope, " +
-                    "then reboot and retry.",
-                color = OnSurfaceMuted,
-            )
+        is UsageResult.RebootRequired -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry", actionBusy = refreshing) {
+            Text(usageResult.detail, color = MaterialTheme.colorScheme.error)
         }
 
         is UsageResult.NotFound -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry", actionBusy = refreshing) {
             Text(usageResult.detail, color = OnSurfaceMuted)
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onOpenClaude, contentPadding = PaddingValues(0.dp)) {
+                Text("Open Claude", color = ClaudeClay)
+            }
         }
 
         is UsageResult.Error -> InfoCard(title = "Live usage (LSPosed)", onAction = onRetry, actionLabel = "Retry", actionBusy = refreshing) {

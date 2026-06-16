@@ -71,7 +71,9 @@ class UsageProvider : ContentProvider() {
                     UsageLog.d("UsageProvider: live usage disabled — skipping auto-refresh")
                     return@runBlocking
                 }
-                when (val result = LiveUsageReader().read(settings, moduleActive = true)) {
+                // Credentials were just published, so the read goes straight to
+                // the network — the reboot hint is irrelevant here.
+                when (val result = LiveUsageReader().read(settings, rebootNeeded = false)) {
                     is UsageResult.Found -> {
                         SettingsRepository(ctx).cacheLiveUsage(result.snapshot.weeklyUtilizationPercent)
                         UsageWidget.refresh(ctx)
