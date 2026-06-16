@@ -16,6 +16,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // libsu (topjohnwu) is distributed through JitPack.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

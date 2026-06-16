@@ -1,19 +1,27 @@
 package com.xiddoc.claudeophobia.data
 
+import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import java.io.BufferedReader
 
 /**
  * Pulls live Claude usage by:
- *  1. using `su` to read the Claude app's cookie jar (shared_prefs), and
+ *  1. using root (via [libsu][Shell]) to read the Claude app's cookie jar
+ *     (shared_prefs), and
  *  2. calling the same `/usage` endpoint the official client uses, forwarding
  *     those cookies (most importantly `sessionKey`).
  *
  * The Claude app does not cache usage on disk, so reading a file isn't enough —
  * we have to ask the server. Credentials live only in memory for the duration
  * of the request; secret values are never written to logs (see [UsageLog]).
+ *
+ * Root commands run through libsu rather than a hand-rolled `ProcessBuilder("su",
+ * "-c", …)`. The old approach span a fresh, non-interactive `su -c` shell per
+ * command, and on Magisk that shell ran in a context where `find`/`grep` over
+ * the target app's data dir silently failed (exit 1/2, no output) even though the
+ * very same commands worked in an interactive `su` session. libsu keeps a single
+ * persistent interactive root shell and pipes each command to it over stdin — the
+ * same execution model as a real `su` session — so those reads now succeed.
  *
  * The whole sequence is heavily traced under the `ClaudeUsage` logcat tag so a
  * failing read can be diagnosed step-by-step:
@@ -92,12 +100,19 @@ class RootUsageReader(
 
     // ---- root plumbing ----------------------------------------------------
 
-    private suspend fun isRootAvailable(): Boolean {
-        UsageLog.d("isRootAvailable(): probing with `su -c id`")
-        val out = runSu("id")
-        val ok = out?.contains("uid=0") == true
-        UsageLog.d("isRootAvailable(): id -> ${out?.trim()?.take(80) ?: "<null>"} (root=$ok)")
-        return ok
+    private fun isRootAvailable(): Boolean {
+        UsageLog.d("isRootAvailable(): requesting a root shell from libsu")
+        // getShell() blocks until the shell is constructed (and, on first use,
+        // until the superuser prompt is answered). isRoot reflects the uid the
+        // shell actually obtained.
+        val root = try {
+            Shell.getShell().isRoot
+        } catch (e: Exception) {
+            UsageLog.w("isRootAvailable(): failed to obtain a shell", e)
+            false
+        }
+        UsageLog.d("isRootAvailable(): shell isRoot=$root")
+        return root
     }
 
     /**
@@ -105,7 +120,7 @@ class RootUsageReader(
      * stores cookies as HTML-escaped JSON inside a `shared_prefs/user_cookies_*.xml`
      * file, e.g. `...&quot;name&quot;:&quot;sessionKey&quot;,&quot;value&quot;:&quot;...&quot;...`
      */
-    private suspend fun readCookieJar(): Map<String, String>? {
+    private fun readCookieJar(): Map<String, String>? {
         val dirs = listOf("/data/data/$packageName", "/data/user/0/$packageName")
         val findCmd = dirs.joinToString("; ") { dir ->
             "find '$dir' -name 'user_cookies_*.xml' 2>/dev/null"
@@ -163,38 +178,42 @@ class RootUsageReader(
         return result
     }
 
-    private suspend fun runSu(command: String): String? {
-        UsageLog.d("runSu(): exec `su -c` ${command.take(160)}")
-        // `process.inputStream` never yields null, so the only null the block
-        // produces is the caught-exception path — letting us tell an exception
-        // apart from a withTimeoutOrNull timeout.
-        var threw = false
-        val result = withTimeoutOrNull(SU_TIMEOUT_MS) {
-            try {
-                val process = ProcessBuilder("su", "-c", command)
-                    .redirectErrorStream(false)
-                    .start()
-                val output = process.inputStream.bufferedReader().use(BufferedReader::readText)
-                val exit = process.waitFor()
-                // NB: never log `output` itself — it may hold the raw cookie jar.
-                UsageLog.d("runSu(): exit=$exit, read ${output.length} chars of output")
-                output
-            } catch (e: Exception) {
-                UsageLog.w("runSu(): command failed to run", e)
-                threw = true
-                null
-            }
+    /**
+     * Runs [command] in libsu's shared root shell and returns its stdout as a
+     * single string (or null if the command couldn't be run / exited non-zero
+     * with no output). stderr is left out of the result on purpose — callers
+     * already redirect it with `2>/dev/null` — but we never log stdout itself,
+     * since it may hold the raw cookie jar.
+     */
+    private fun runSu(command: String): String? {
+        UsageLog.d("runSu(): exec ${command.take(160)}")
+        return try {
+            val result = Shell.cmd(command).exec()
+            val output = result.out.joinToString("\n")
+            UsageLog.d("runSu(): exit=${result.code}, read ${output.length} chars of output")
+            output.ifEmpty { null }
+        } catch (e: Exception) {
+            UsageLog.w("runSu(): command failed to run", e)
+            null
         }
-        if (result == null && !threw) {
-            UsageLog.w("runSu(): timed out after ${SU_TIMEOUT_MS}ms — `su` may be prompting or absent")
-        }
-        return result
     }
 
     companion object {
         const val DEFAULT_PACKAGE = "com.anthropic.claude"
 
-        private const val SU_TIMEOUT_MS = 8_000L
+        init {
+            // Configure the process-wide shell before anything asks for one.
+            // A generous timeout covers the superuser prompt on first launch;
+            // commands themselves are fast.
+            Shell.enableVerboseLogging = false
+            Shell.setDefaultBuilder(
+                Shell.Builder.create()
+                    .setFlags(Shell.FLAG_MOUNT_MASTER)
+                    .setTimeout(SHELL_TIMEOUT_SECONDS)
+            )
+        }
+
+        private const val SHELL_TIMEOUT_SECONDS = 10L
 
         // "name":"<cookie>","value":"<value>" — order as stored by the app.
         private val COOKIE_PAIR =
