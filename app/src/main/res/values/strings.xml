@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Claude-o-phobia</string>
+    <string name="settings">Settings</string>
+    <string name="back">Back</string>
+</resources>
