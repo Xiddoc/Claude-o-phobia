@@ -38,11 +38,22 @@ class LiveUsageReader {
             val cookieHeader = settings.cookieHeader.orEmpty()
             UsageLog.d("read(): have cookie header (${cookieHeader.length} chars)")
 
+            // Impersonate the Claude app (captured version, else a built-in fallback)
+            // so the forwarded cf_clearance cookie stays valid for Cloudflare.
+            val client = ClaudeClient(
+                userAgent = settings.userAgent?.takeIf { it.isNotBlank() }
+                    ?: ClaudeClient.userAgentFor(
+                        settings.clientVersion ?: ClaudeClient.FALLBACK_CLIENT_VERSION
+                    ),
+                clientVersion = settings.clientVersion ?: ClaudeClient.FALLBACK_CLIENT_VERSION,
+            )
+            UsageLog.d("read(): client UA '${client.userAgent}' (version ${client.clientVersion})")
+
             val orgId = settings.orgId?.takeIf { it.isNotBlank() }
                 ?.also { UsageLog.d("read(): using captured org id ${UsageLog.redact(it)}") }
                 ?: run {
                     UsageLog.d("read(): no captured org id — discovering from /api/organizations")
-                    ClaudeApi.fetchFirstOrgId(cookieHeader)
+                    ClaudeApi.fetchFirstOrgId(cookieHeader, client)
                 }
                 ?: run {
                     UsageLog.w("read(): could not determine an organization id — NotFound")
@@ -51,7 +62,7 @@ class LiveUsageReader {
             UsageLog.d("read(): resolved org id ${UsageLog.redact(orgId)}")
 
             return@withContext try {
-                val snapshot = ClaudeApi.fetchUsage(orgId, cookieHeader)
+                val snapshot = ClaudeApi.fetchUsage(orgId, cookieHeader, client)
                 UsageLog.d(
                     "read(): SUCCESS weekly=${snapshot.weeklyUtilizationPercent}% " +
                         "fiveHour=${snapshot.fiveHourUtilizationPercent}% " +

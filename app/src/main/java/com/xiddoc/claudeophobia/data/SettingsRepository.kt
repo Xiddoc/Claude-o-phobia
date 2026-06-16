@@ -31,6 +31,14 @@ data class AppSettings(
     val cookieHeader: String? = null,
     /** The Claude organization id the module captured alongside the cookie. */
     val orgId: String? = null,
+    /**
+     * The Claude app's own wire `User-Agent`, captured in-process by the module.
+     * We replay it verbatim so the forwarded `cf_clearance` cookie stays valid for
+     * Cloudflare (it's bound to this UA). Null until the module has captured it.
+     */
+    val userAgent: String? = null,
+    /** The Claude app version the module captured (for the `Anthropic-Client-Version` header). */
+    val clientVersion: String? = null,
     /** When the module last refreshed the credentials (epoch millis), 0 if never. */
     val credentialsCapturedAtMs: Long = 0L,
     /**
@@ -61,6 +69,8 @@ class SettingsRepository(private val context: Context) {
             liveUsageEnabled = prefs[KEY_LIVE_ENABLED] ?: false,
             cookieHeader = prefs[KEY_COOKIE],
             orgId = prefs[KEY_ORG],
+            userAgent = prefs[KEY_USER_AGENT],
+            clientVersion = prefs[KEY_CLIENT_VERSION],
             credentialsCapturedAtMs = prefs[KEY_CRED_AT] ?: 0L,
             lastWeeklyUsagePercent = prefs[KEY_LAST_WEEKLY_PCT],
             lastUsageTimestampMs = prefs[KEY_LAST_USAGE_TS] ?: 0L,
@@ -74,11 +84,15 @@ class SettingsRepository(private val context: Context) {
     suspend fun publishCredentials(
         cookieHeader: String,
         orgId: String?,
+        userAgent: String? = null,
+        clientVersion: String? = null,
         timestampMs: Long = System.currentTimeMillis(),
     ) {
         context.dataStore.edit { prefs ->
             prefs[KEY_COOKIE] = cookieHeader
             if (!orgId.isNullOrBlank()) prefs[KEY_ORG] = orgId else prefs.remove(KEY_ORG)
+            if (!userAgent.isNullOrBlank()) prefs[KEY_USER_AGENT] = userAgent else prefs.remove(KEY_USER_AGENT)
+            if (!clientVersion.isNullOrBlank()) prefs[KEY_CLIENT_VERSION] = clientVersion else prefs.remove(KEY_CLIENT_VERSION)
             prefs[KEY_CRED_AT] = timestampMs
         }
     }
@@ -120,6 +134,8 @@ class SettingsRepository(private val context: Context) {
         private val KEY_LIVE_ENABLED = booleanPreferencesKey("live_usage_enabled")
         private val KEY_COOKIE = stringPreferencesKey("live_cookie_header")
         private val KEY_ORG = stringPreferencesKey("live_org_id")
+        private val KEY_USER_AGENT = stringPreferencesKey("live_user_agent")
+        private val KEY_CLIENT_VERSION = stringPreferencesKey("live_client_version")
         private val KEY_CRED_AT = longPreferencesKey("live_cred_captured_at")
         private val KEY_LAST_WEEKLY_PCT = doublePreferencesKey("last_weekly_pct")
         private val KEY_LAST_USAGE_TS = longPreferencesKey("last_usage_ts")
