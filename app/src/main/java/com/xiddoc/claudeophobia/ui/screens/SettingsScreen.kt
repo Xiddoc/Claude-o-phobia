@@ -198,6 +198,33 @@ fun SettingsScreen(
                 )
             }
 
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Home screen cards ---------------------------------------
+            InfoCard(title = "5-hour rolling window") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Show the 5-hour window card",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = settings.fiveHourWindowEnabled,
+                        onCheckedChange = { viewModel.setFiveHourWindowEnabled(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Hide this if you only care about the weekly limit. The card " +
+                        "tracks your current 5-hour rolling window — how much you've used " +
+                        "and how far through the window you are.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceMuted,
+                )
+            }
+
             Spacer(Modifier.height(24.dp))
 
             Text(

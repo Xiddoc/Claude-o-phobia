@@ -154,6 +154,7 @@ fun CountdownScreen(
                 usageResult = usageResult,
                 refreshing = refreshing,
                 expectedFraction = progress.fraction,
+                showFiveHourWindow = settings.fiveHourWindowEnabled,
                 now = now,
                 configuredNextReset = progress.nextReset.toInstant(),
                 onRetry = viewModel::refreshUsage,
@@ -171,6 +172,7 @@ private fun LiveUsageSection(
     usageResult: UsageResult,
     refreshing: Boolean,
     expectedFraction: Double,
+    showFiveHourWindow: Boolean,
     now: Instant,
     configuredNextReset: Instant,
     onRetry: () -> Unit,
@@ -256,39 +258,43 @@ private fun LiveUsageSection(
                 }
             }
 
-            // 5-hour rolling window.
-            val end = snap.fiveHourResetEpochMs
-            val fiveUtil = snap.fiveHourUtilizationPercent
-            Spacer(Modifier.height(16.dp))
-            InfoCard(title = "5-hour rolling window") {
-                if (fiveUtil != null) {
-                    StatRow(label = "Used in window", value = "${fiveUtil.toInt()}%")
-                }
-                if (end != null) {
-                    val endInstant = Instant.ofEpochMilli(end)
-                    val windowStart = endInstant.minus(Duration.ofHours(5))
-                    val elapsed = Duration.between(windowStart, now).toMillis()
-                        .coerceAtLeast(0)
-                    val frac = (elapsed.toDouble() / Duration.ofHours(5).toMillis())
-                        .coerceIn(0.0, 1.0)
-                    Spacer(Modifier.height(10.dp))
-                    StatRow(label = "Window progress", value = formatPercent(frac))
-                    Spacer(Modifier.height(8.dp))
-                    LinearMeter(progress = frac.toFloat())
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Window ends " + formatRelative(endInstant, now),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = OnSurfaceMuted,
-                    )
-                } else {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "No active 5-hour window right now — it starts the moment you " +
-                            "send your next message to Claude.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = OnSurfaceMuted,
-                    )
+            // 5-hour rolling window — hidden entirely when turned off in settings.
+            if (showFiveHourWindow) {
+                val end = snap.fiveHourResetEpochMs
+                val fiveUtil = snap.fiveHourUtilizationPercent
+                Spacer(Modifier.height(16.dp))
+                InfoCard(title = "5-hour rolling window") {
+                    if (fiveUtil != null) {
+                        StatRow(label = "Used in window", value = "${fiveUtil.toInt()}%")
+                        Spacer(Modifier.height(8.dp))
+                        LinearMeter(progress = (fiveUtil / 100.0).toFloat())
+                    }
+                    if (end != null) {
+                        val endInstant = Instant.ofEpochMilli(end)
+                        val windowStart = endInstant.minus(Duration.ofHours(5))
+                        val elapsed = Duration.between(windowStart, now).toMillis()
+                            .coerceAtLeast(0)
+                        val frac = (elapsed.toDouble() / Duration.ofHours(5).toMillis())
+                            .coerceIn(0.0, 1.0)
+                        Spacer(Modifier.height(if (fiveUtil != null) 16.dp else 10.dp))
+                        StatRow(label = "How far you should be", value = formatPercent(frac))
+                        Spacer(Modifier.height(8.dp))
+                        LinearMeter(progress = frac.toFloat())
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Window ends " + formatRelative(endInstant, now),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnSurfaceMuted,
+                        )
+                    } else {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "No active 5-hour window right now — it starts the moment you " +
+                                "send your next message to Claude.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnSurfaceMuted,
+                        )
+                    }
                 }
             }
         }
