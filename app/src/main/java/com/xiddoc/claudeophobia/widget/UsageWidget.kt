@@ -86,14 +86,17 @@ class UsageWidget : AppWidgetProvider() {
 
             // Render the same figures into two layouts and let the launcher swap
             // between them by size: a wide single-row card when short (~5x1), the
-            // taller stacked card when there's vertical room (~3x2 and up).
+            // taller centered card once there's a second row of height (~5x2+).
+            // The tall breakpoint sits at ~100dp so a two-cell-tall widget (whose
+            // usable height lands near there) flips to the stacked design instead
+            // of staying stuck on the compact row.
             fun build(layout: Int) =
                 buildViews(context, layout, value, label, barPct, pacePct, caption)
 
             val views = RemoteViews(
                 mapOf(
                     SizeF(180f, 50f) to build(R.layout.widget_usage_compact),
-                    SizeF(180f, 120f) to build(R.layout.widget_usage),
+                    SizeF(180f, 100f) to build(R.layout.widget_usage),
                 )
             )
 

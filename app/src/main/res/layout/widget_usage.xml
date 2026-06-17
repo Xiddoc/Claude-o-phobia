@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Tall rendering (roughly 3x2 and up). A weighted Space sits above the caption
-  so the content fills the card's height intentionally: header and figure ride
-  the top, the caption settles on the bottom, and any extra height the user
-  stretches into is absorbed in the middle rather than pooling as dead space.
-  Shares its view IDs with widget_usage_compact.xml so one render path feeds both.
+  Tall rendering (roughly 5x2 and up). The header rides above the big figure,
+  the bar, and the caption as a single stacked block that is centered in the
+  card's height (android:gravity="center_vertical") — so when the user stretches
+  to two rows the original layout sits balanced in the middle rather than
+  pooling dead space at the bottom. Shares its view IDs with
+  widget_usage_compact.xml so one render path feeds both.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
+    android:gravity="center_vertical"
     android:background="@drawable/widget_bg"
     android:padding="16dp">
 
@@ -62,23 +64,11 @@
         android:progress="0"
         android:progressDrawable="@drawable/widget_progress" />
 
-    <!--
-      Flexible spacer that pushes the caption to the bottom. Must be a
-      LinearLayout, not a <Space>/<View>: RemoteViews only inflates a fixed
-      whitelist of view types, and Space isn't on it, so an app widget using
-      one fails to render ("Couldn't add widget") whenever this layout is shown.
-    -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:minHeight="10dp"
-        android:orientation="vertical" />
-
     <TextView
         android:id="@+id/widget_caption"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
         android:text=""
         android:textColor="#A39B8D"
         android:textSize="11sp" />
