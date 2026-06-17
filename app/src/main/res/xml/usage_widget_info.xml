@@ -4,8 +4,6 @@
     android:minHeight="40dp"
     android:minResizeWidth="180dp"
     android:minResizeHeight="40dp"
-    android:maxResizeWidth="480dp"
-    android:maxResizeHeight="200dp"
     android:targetCellWidth="5"
     android:targetCellHeight="1"
     android:description="@string/widget_description"
