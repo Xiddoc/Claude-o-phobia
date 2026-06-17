@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.util.SizeF
 import android.widget.RemoteViews
 import com.xiddoc.claudeophobia.MainActivity
 import com.xiddoc.claudeophobia.R
@@ -58,45 +59,57 @@ class UsageWidget : AppWidgetProvider() {
             val resetDay = settings.resetConfig.dayOfWeek
                 .getDisplayName(TextStyle.SHORT, Locale.getDefault())
 
-            val views = RemoteViews(context.packageName, R.layout.widget_usage)
-
             val live = settings.lastWeeklyUsagePercent
             // The pacing cue only makes sense once there's real usage to compare
             // against the clock; without it the bar already *is* the week's pace.
             val showPacing = settings.widgetPacingEnabled && live != null
 
-            if (live != null) {
-                views.setTextViewText(R.id.widget_value, "${live.toInt()}%")
-                views.setTextViewText(R.id.widget_label, "used this week")
-                views.setProgressBar(R.id.widget_progress, 100, live.toInt(), false)
-            } else {
-                views.setTextViewText(R.id.widget_value, "$elapsedPct%")
-                views.setTextViewText(R.id.widget_label, "of week elapsed")
-                views.setProgressBar(R.id.widget_progress, 100, elapsedPct, false)
-            }
-
+            val barPct = (live?.toInt() ?: elapsedPct)
+            val value = "$barPct%"
+            val label = if (live != null) "used this week" else "of week elapsed"
             // Mark where a steady pace would put you. Off the bar (0) unless we're
             // showing the cue, so a stale band never lingers after the toggle flips.
-            views.setInt(
-                R.id.widget_progress,
-                "setSecondaryProgress",
-                if (showPacing) elapsedPct else 0,
-            )
-
-            if (showPacing) {
+            val pacePct = if (showPacing) elapsedPct else 0
+            val caption = if (showPacing) {
                 val delta = Pacing.delta(live!!.toInt(), elapsedPct)
-                views.setTextViewText(
-                    R.id.widget_caption,
-                    "${Pacing.glyph(delta)} ${Pacing.shortLabel(delta)} · " +
-                        "$elapsedPct% of week elapsed",
-                )
+                "${Pacing.glyph(delta)} ${Pacing.shortLabel(delta)} · " +
+                    "$elapsedPct% of week elapsed"
             } else {
-                views.setTextViewText(
-                    R.id.widget_caption,
-                    "$elapsedPct% of week done · resets $resetDay",
-                )
+                "$elapsedPct% of week done · resets $resetDay"
             }
 
+            // Render the same figures into two layouts and let the launcher swap
+            // between them by size: a wide single-row card when short (~4x1), the
+            // taller stacked card when there's vertical room (~3x2 and up).
+            fun build(layout: Int) =
+                buildViews(context, layout, value, label, barPct, pacePct, caption)
+
+            val views = RemoteViews(
+                mapOf(
+                    SizeF(180f, 50f) to build(R.layout.widget_usage_compact),
+                    SizeF(180f, 120f) to build(R.layout.widget_usage),
+                )
+            )
+
+            manager.updateAppWidget(widgetId, views)
+        }
+
+        /** Binds the computed figures into one layout and wires its tap target. */
+        private fun buildViews(
+            context: Context,
+            layout: Int,
+            value: String,
+            label: String,
+            barPct: Int,
+            pacePct: Int,
+            caption: String,
+        ): RemoteViews {
+            val views = RemoteViews(context.packageName, layout)
+            views.setTextViewText(R.id.widget_value, value)
+            views.setTextViewText(R.id.widget_label, label)
+            views.setProgressBar(R.id.widget_progress, 100, barPct, false)
+            views.setInt(R.id.widget_progress, "setSecondaryProgress", pacePct)
+            views.setTextViewText(R.id.widget_caption, caption)
             views.setOnClickPendingIntent(
                 R.id.widget_root,
                 PendingIntent.getActivity(
@@ -107,8 +120,7 @@ class UsageWidget : AppWidgetProvider() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),
             )
-
-            manager.updateAppWidget(widgetId, views)
+            return views
         }
     }
 }
