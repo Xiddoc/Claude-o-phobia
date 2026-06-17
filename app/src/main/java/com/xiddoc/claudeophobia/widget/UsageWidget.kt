@@ -87,12 +87,13 @@ class UsageWidget : AppWidgetProvider() {
             // Render the same figures into two layouts and let the launcher swap
             // between them by size: a wide single-row card when short (~5x1), the
             // taller centered card once there's a second row of height (~5x2+).
-            // The tall breakpoint sits at 150dp: a single home-screen row only
-            // hands us ~100-110dp of usable height, so a 5x1 stays on the compact
-            // row, while a two-cell-tall widget (~200dp) clears the bar and flips
-            // to the stacked design. A lower breakpoint let the title-bearing tall
-            // layout render inside a single row, where its stacked content
-            // overflowed and clipped the "Claude-o-phobia" header off the top.
+            // Both layouts carry the "Claude-o-phobia" header now, so neither size
+            // drops it. The tall breakpoint sits at 150dp: a single home-screen row
+            // only hands us ~100-150dp of usable height, so a 5x1 stays on the
+            // compact card (header on a slim line above a packed single row), while
+            // a two-cell-tall widget (~200dp+) clears the bar and flips to the
+            // roomier stacked design. The compact layout keeps the header on its
+            // own line above the figure/bar so it can never be clipped off the top.
             fun build(layout: Int) =
                 buildViews(context, layout, value, label, barPct, pacePct, caption)
 
