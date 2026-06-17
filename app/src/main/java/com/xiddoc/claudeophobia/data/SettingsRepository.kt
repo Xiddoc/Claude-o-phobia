@@ -29,6 +29,12 @@ data class AppSettings(
      */
     val syncIntervalMinutes: Int = DEFAULT_SYNC_INTERVAL_MINUTES,
     /**
+     * Whether the home-screen widget shows a pacing cue — a faint "where you
+     * should be" marker on the bar plus an ahead/under-pace verdict in the
+     * caption — comparing live usage against how much of the week has elapsed.
+     */
+    val widgetPacingEnabled: Boolean = true,
+    /**
      * The Claude session cookie header the LSPosed module captured from inside
      * the Claude process and handed to us. The app forwards it to claude.ai to
      * read live usage (the same call the app makes). Null until the module has
@@ -83,6 +89,7 @@ class SettingsRepository(private val context: Context) {
             liveUsageEnabled = prefs[KEY_LIVE_ENABLED] ?: false,
             syncIntervalMinutes = prefs[KEY_SYNC_INTERVAL]
                 ?: AppSettings.DEFAULT_SYNC_INTERVAL_MINUTES,
+            widgetPacingEnabled = prefs[KEY_WIDGET_PACING] ?: true,
             cookieHeader = prefs[KEY_COOKIE],
             orgId = prefs[KEY_ORG],
             userAgent = prefs[KEY_USER_AGENT],
@@ -147,6 +154,10 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_SYNC_INTERVAL] = minutes.coerceAtLeast(1) }
     }
 
+    suspend fun setWidgetPacingEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_WIDGET_PACING] = enabled }
+    }
+
     companion object {
         private val KEY_DAY = intPreferencesKey("reset_day_of_week")
         private val KEY_HOUR = intPreferencesKey("reset_hour")
@@ -154,6 +165,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_ZONE = stringPreferencesKey("reset_zone")
         private val KEY_LIVE_ENABLED = booleanPreferencesKey("live_usage_enabled")
         private val KEY_SYNC_INTERVAL = intPreferencesKey("sync_interval_minutes")
+        private val KEY_WIDGET_PACING = booleanPreferencesKey("widget_pacing_enabled")
         private val KEY_COOKIE = stringPreferencesKey("live_cookie_header")
         private val KEY_ORG = stringPreferencesKey("live_org_id")
         private val KEY_USER_AGENT = stringPreferencesKey("live_user_agent")

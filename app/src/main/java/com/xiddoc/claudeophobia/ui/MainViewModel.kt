@@ -137,6 +137,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.setSyncIntervalMinutes(minutes) }
     }
 
+    fun setWidgetPacingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setWidgetPacingEnabled(enabled)
+            // Re-render any placed widget so the cue appears/disappears at once.
+            UsageWidget.refresh(getApplication())
+        }
+    }
+
     /**
      * Launches the Claude app. Opening it makes the module re-run its capture
      * (on Application start / activity resume), which is how a session reaches us

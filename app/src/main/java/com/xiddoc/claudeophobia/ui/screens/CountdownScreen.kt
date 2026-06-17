@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.xiddoc.claudeophobia.data.Pacing
 import com.xiddoc.claudeophobia.data.UsageResult
 import com.xiddoc.claudeophobia.ui.MainViewModel
 import com.xiddoc.claudeophobia.ui.components.InfoCard
@@ -222,14 +223,9 @@ private fun LiveUsageSection(
                     LinearMeter(progress = (actual / 100.0).toFloat())
                     Spacer(Modifier.height(10.dp))
                     val expectedPct = (expectedFraction * 100).toInt()
-                    val delta = actual.toInt() - expectedPct
-                    val verdict = when {
-                        delta > 5 -> "You're ${delta}% ahead of pace — easy does it. 🙂"
-                        delta < -5 -> "You're ${-delta}% under pace — plenty of room. 🚀"
-                        else -> "Right on pace. ✨"
-                    }
+                    val delta = Pacing.delta(actual.toInt(), expectedPct)
                     Text(
-                        text = "Expected ~$expectedPct%. $verdict",
+                        text = "Expected ~$expectedPct%. " + Pacing.verdict(delta),
                         style = MaterialTheme.typography.bodySmall,
                         color = OnSurfaceMuted,
                     )
