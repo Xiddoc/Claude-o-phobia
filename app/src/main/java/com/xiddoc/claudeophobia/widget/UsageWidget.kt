@@ -85,7 +85,7 @@ class UsageWidget : AppWidgetProvider() {
             }
 
             // Render the same figures into two layouts and let the launcher swap
-            // between them by size: a wide single-row card when short (~4x1), the
+            // between them by size: a wide single-row card when short (~5x1), the
             // taller stacked card when there's vertical room (~3x2 and up).
             fun build(layout: Int) =
                 buildViews(context, layout, value, label, barPct, pacePct, caption)

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Compact, wide rendering (roughly 4x1). The header is dropped and the big
+  Compact, wide rendering (roughly 5x1). The header is dropped and the big
   number sits beside the bar so the whole card breathes in a single home-screen
   row. Shares its view IDs with widget_usage.xml so one render path feeds both.
 -->
