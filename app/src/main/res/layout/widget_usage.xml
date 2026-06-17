@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tall rendering (roughly 3x2 and up). A weighted Space sits above the caption
+  so the content fills the card's height intentionally: header and figure ride
+  the top, the caption settles on the bottom, and any extra height the user
+  stretches into is absorbed in the middle rather than pooling as dead space.
+  Shares its view IDs with widget_usage_compact.xml so one render path feeds both.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
@@ -55,11 +62,16 @@
         android:progress="0"
         android:progressDrawable="@drawable/widget_progress" />
 
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:minHeight="10dp" />
+
     <TextView
         android:id="@+id/widget_caption"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
         android:text=""
         android:textColor="#A39B8D"
         android:textSize="11sp" />
