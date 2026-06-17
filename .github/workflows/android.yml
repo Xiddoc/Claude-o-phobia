@@ -85,7 +85,13 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Build minified release APK
-        run: ./gradlew assembleRelease --stacktrace
+        # Bake the release version (matching the v1.0.<run> tag below) into the
+        # APK so the in-app About screen can detect when it's out of date.
+        run: >-
+          ./gradlew assembleRelease
+          -PappVersionCode=${{ github.run_number }}
+          -PappVersionName=1.0.${{ github.run_number }}
+          --stacktrace
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4

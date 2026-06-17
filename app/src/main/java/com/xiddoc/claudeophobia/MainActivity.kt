@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.xiddoc.claudeophobia.ui.MainViewModel
+import com.xiddoc.claudeophobia.ui.screens.AboutScreen
 import com.xiddoc.claudeophobia.ui.screens.CountdownScreen
 import com.xiddoc.claudeophobia.ui.screens.SettingsScreen
 import com.xiddoc.claudeophobia.ui.theme.ClaudeophobiaTheme
@@ -49,23 +50,29 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    var showSettings by remember { mutableStateOf(false) }
-                    // System back leaves Settings instead of exiting the app.
-                    BackHandler(enabled = showSettings) { showSettings = false }
+                    var screen by remember { mutableStateOf(Screen.Home) }
+                    // System back returns to the home screen instead of exiting.
+                    BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
                     AnimatedContent(
-                        targetState = showSettings,
+                        targetState = screen,
                         transitionSpec = { fadeIn() togetherWith fadeOut() },
                         label = "screen",
-                    ) { settings ->
-                        if (settings) {
-                            SettingsScreen(
+                    ) { current ->
+                        when (current) {
+                            Screen.Settings -> SettingsScreen(
                                 viewModel = viewModel,
-                                onBack = { showSettings = false },
+                                onBack = { screen = Screen.Home },
                             )
-                        } else {
-                            CountdownScreen(
+
+                            Screen.About -> AboutScreen(
                                 viewModel = viewModel,
-                                onOpenSettings = { showSettings = true },
+                                onBack = { screen = Screen.Home },
+                            )
+
+                            Screen.Home -> CountdownScreen(
+                                viewModel = viewModel,
+                                onOpenSettings = { screen = Screen.Settings },
+                                onOpenAbout = { screen = Screen.About },
                             )
                         }
                     }
@@ -85,3 +92,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/** Top-level destinations the single activity swaps between. */
+private enum class Screen { Home, Settings, About }
