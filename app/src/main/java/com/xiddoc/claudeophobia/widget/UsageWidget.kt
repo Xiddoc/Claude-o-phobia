@@ -23,8 +23,14 @@ import java.util.Locale
  * Crucially, the widget never talks to Claude. It renders the locally-computed
  * "percent of the week elapsed" (pure schedule math) and, when available, the
  * last live usage figure the LSPosed module captured from the Claude app. That way
- * it can sit on the home screen and refresh on a slow cadence without ever
- * generating a usage request.
+ * it can sit on the home screen without ever generating a usage request.
+ *
+ * It is also fully push-driven: [usage_widget_info] sets `updatePeriodMillis=0`,
+ * so Android never wakes the device to poll us on a timer. Every redraw comes from
+ * an explicit [refresh] — when a fetch caches a fresher figure, when the daily nudge
+ * fires, or when a widget setting changes — so the home screen only does work when
+ * the numbers it shows have actually moved, instead of waking the phone every half
+ * hour to re-draw unchanged cached data.
  */
 class UsageWidget : AppWidgetProvider() {
 
