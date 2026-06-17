@@ -4,6 +4,14 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Version is injected by CI so the installed build matches its GitHub release
+// tag (`v1.0.<run>`); the About screen compares the two to detect updates. Local
+// builds fall back to a 0-run dev version. Override with
+// `-PappVersionCode=<n> -PappVersionName=1.0.<n>`.
+val ciVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
+val ciVersionName = (project.findProperty("appVersionName") as String?)?.takeIf { it.isNotBlank() }
+    ?: "1.0.0"
+
 android {
     namespace = "com.xiddoc.claudeophobia"
     compileSdk = 35
@@ -14,8 +22,8 @@ android {
         // internals, so we focus on modern, well-understood platform versions.
         minSdk = 34
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = ciVersionCode
+        versionName = ciVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

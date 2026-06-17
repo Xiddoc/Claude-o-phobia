@@ -10,10 +10,15 @@ import com.xiddoc.claudeophobia.data.LiveUsageReader
 import com.xiddoc.claudeophobia.data.ModuleStatus
 import com.xiddoc.claudeophobia.data.ResetConfig
 import com.xiddoc.claudeophobia.data.SettingsRepository
+import com.xiddoc.claudeophobia.data.UpdateChecker
+import com.xiddoc.claudeophobia.data.UpdateStatus
 import com.xiddoc.claudeophobia.data.UsageLog
 import com.xiddoc.claudeophobia.data.UsageResult
+import com.xiddoc.claudeophobia.data.VersionCompare
 import com.xiddoc.claudeophobia.widget.UsageWidget
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +53,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    /** Our own installed version name (e.g. `1.0.42`), shown on the About screen. */
+    val appVersionName: String = runCatching {
+        @Suppress("DEPRECATION")
+        application.packageManager
+            .getPackageInfo(application.packageName, 0)
+            .versionName
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "unknown"
+
+    private val _updateStatus = MutableStateFlow<UpdateStatus>(UpdateStatus.Idle)
+    val updateStatus: StateFlow<UpdateStatus> = _updateStatus.asStateFlow()
 
     init {
         // Live clock.
@@ -109,6 +125,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (elapsed < MIN_SPINNER_MS) delay(MIN_SPINNER_MS - elapsed)
                 _refreshing.value = false
             }
+        }
+    }
+
+    /**
+     * Asks GitHub whether a newer release exists than the installed build. Result
+     * flows into [updateStatus] for the About screen; never throws to the caller.
+     */
+    fun checkForUpdate() {
+        if (_updateStatus.value is UpdateStatus.Checking) return
+        viewModelScope.launch {
+            _updateStatus.value = UpdateStatus.Checking
+            val result = withContext(Dispatchers.IO) {
+                runCatching { UpdateChecker.fetchLatest() }
+            }
+            _updateStatus.value = result.fold(
+                onSuccess = { latest ->
+                    if (VersionCompare.isNewer(latest.versionName, appVersionName)) {
+                        UpdateStatus.Available(latest.versionName, latest.downloadUrl)
+                    } else {
+                        UpdateStatus.UpToDate(appVersionName)
+                    }
+                },
+                onFailure = {
+                    UsageLog.w("checkForUpdate(): failed", it)
+                    UpdateStatus.Failed(it.message ?: "Couldn't reach GitHub.")
+                },
+            )
         }
     }
 

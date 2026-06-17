@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +51,7 @@ import java.time.Instant
 fun CountdownScreen(
     viewModel: MainViewModel,
     onOpenSettings: () -> Unit,
+    onOpenAbout: () -> Unit,
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val now by viewModel.now.collectAsStateWithLifecycle()
@@ -82,6 +84,13 @@ fun CountdownScreen(
                     color = OnSurfaceMuted,
                     modifier = Modifier.weight(1f),
                 )
+                IconButton(onClick = onOpenAbout) {
+                    Icon(
+                        imageVector = Icons.Outlined.FavoriteBorder,
+                        contentDescription = "About",
+                        tint = OnSurfaceMuted,
+                    )
+                }
                 IconButton(onClick = onOpenSettings) {
                     Icon(
                         imageVector = Icons.Outlined.Settings,
