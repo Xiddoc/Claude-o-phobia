@@ -14,9 +14,7 @@
 - **🎯 A widget pacing cue** (toggleable in Settings) — a faint "where you should
   be" marker on the widget's bar at the point you've reached in the week, plus a
   line telling you whether your live usage is *ahead of* or *under* that pace.
-- **💜 An About screen** — the installed version, a one-tap check against the
-  latest GitHub release (with a download link when there's a newer build), and a
-  shortcut to the source.
+  
 
 ## Installing
 
