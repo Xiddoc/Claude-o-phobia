@@ -51,6 +51,14 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            // libxposed discovers the module via these list files under
+            // META-INF/xposed/ (entry class, scope, module.prop) — make sure R8's
+            // resource handling keeps and merges them into the APK.
+            merges += "META-INF/xposed/*"
+        }
+    }
 }
 
 dependencies {
@@ -66,7 +74,7 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
-    // Xposed/LSPosed API: provided by the framework at runtime, so it's
+    // Modern libxposed API: provided by the framework at runtime, so it's
     // compileOnly and never packaged into our APK.
     compileOnly(libs.xposed.api)
 

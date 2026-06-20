@@ -1,0 +1,4 @@
+minApiVersion=100
+targetApiVersion=102
+staticScope=false
+description=Reads your live Claude usage from inside the Claude app to power the Claude-o-phobia countdown.

@@ -15,9 +15,8 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
+        // The modern libxposed API (io.github.libxposed:api) is on Maven Central.
         mavenCentral()
-        // The Xposed/LSPosed API jar is published on the Xposed maven repo.
-        maven { url = uri("https://api.xposed.info/") }
     }
 }
 
