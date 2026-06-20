@@ -3,90 +3,68 @@ package com.xiddoc.claudeophobia.xposed
 import android.app.Activity
 import android.app.Application
 import android.app.Instrumentation
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import com.xiddoc.claudeophobia.data.ClaudeClient
 import com.xiddoc.claudeophobia.data.ClaudePrefs
 import com.xiddoc.claudeophobia.data.UsageLog
 import com.xiddoc.claudeophobia.data.UsageProvider
-import de.robv.android.xposed.IXposedHookLoadPackage
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
-import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam
+import io.github.libxposed.api.XposedInterface
+import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam
+import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 
 /**
- * The LSPosed entry point (registered in `assets/xposed_init`).
+ * The LSPosed entry point (registered in `META-INF/xposed/java_init.list`).
  *
- * Two packages matter to us:
+ * Built against the modern libxposed API (v102): we extend [XposedModule] and the
+ * framework hands us an [XposedInterface] before dispatching the lifecycle
+ * callbacks below. Hooks are installed with [hook]/`intercept`, an OkHttp-style
+ * interceptor chain — call `chain.proceed()` to run the original, or return a value
+ * without proceeding to short-circuit it.
  *
- *  - **The Claude app** — we read its session cookie + org id from *inside* the
- *    process (no root needed; the process owns the files) and courier them to our
- *    [UsageProvider]. We capture once when Claude's `Application` starts and again
- *    whenever a Claude activity resumes, so the credentials our app uses to fetch
- *    usage stay fresh. The app itself makes the `/usage` request.
- *  - **The system server** (`android`) — Android 11+ package-visibility filtering
- *    hides our (sideloaded) app from Claude, so the courier call above fails with
- *    `Unknown authority`. We can't opt into another app's visibility from our own
- *    manifest, so instead we hook the system server's package-visibility check and
- *    declare *our* package always-resolvable. This is the `forceQueryable`
- *    behaviour the platform reserves for system apps, applied to ourselves.
+ * Two surfaces matter to us:
+ *
+ *  - **The Claude app** ([onPackageLoaded]) — we read its session cookie + org id
+ *    from *inside* the process (no root needed; the process owns the files) and
+ *    courier them to our [UsageProvider]. We capture once when Claude's
+ *    `Application` starts and again whenever a Claude activity resumes, so the
+ *    credentials our app uses to fetch usage stay fresh. The app itself makes the
+ *    `/usage` request.
+ *  - **The system server** ([onSystemServerStarting]) — Android 11+
+ *    package-visibility filtering hides our (sideloaded) app from Claude, so the
+ *    courier call above fails with `Unknown authority`. We can't opt into another
+ *    app's visibility from our own manifest, so instead we hook the system server's
+ *    package-visibility check and declare *our* package always-resolvable. This is
+ *    the `forceQueryable` behaviour the platform reserves for system apps, applied
+ *    to ourselves.
  *
  * Everything is traced to logcat (tag `ClaudeUsage`) and the headline events to
- * the Xposed/LSPosed log, so a broken capture can be diagnosed step by step.
+ * the Xposed/LSPosed log (via [log]), so a broken capture can be diagnosed step by
+ * step.
  *
- * Note we deliberately do **not** hook our own app: LSPosed doesn't list a module
- * inside its own scope, so a self-hook can never load. Activation is inferred from
+ * Note we deliberately do **not** hook our own app: LSPosed never loads a module
+ * into its own process, so a self-hook can never run. Activation is inferred from
  * whether credentials actually arrive, not from a self-probe.
  */
-class ClaudeHook : IXposedHookLoadPackage {
-
-    override fun handleLoadPackage(lpparam: LoadPackageParam) {
-        when (lpparam.packageName) {
-            // The system server: make our package visible to every process so the
-            // courier ContentProvider call from inside Claude can resolve us.
-            "android" -> {
-                XposedBridge.log("Claude-o-phobia: loaded into system_server — arming visibility bypass")
-                hookSystem(lpparam)
-            }
-            // Our own app can't host the module (not in its own scope) and the
-            // system UI never carries a Claude cookie jar — skip both.
-            SELF_PACKAGE, "com.android.systemui" -> Unit
-            else -> {
-                XposedBridge.log("Claude-o-phobia: loaded into ${lpparam.packageName} — installing capture hooks")
-                hookClaude(lpparam)
-            }
-        }
-    }
+class ClaudeHook : XposedModule() {
 
     /** Capture on Claude `Application` start and on every activity resume. */
-    private fun hookClaude(lpparam: LoadPackageParam) {
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                Instrumentation::class.java,
-                "callApplicationOnCreate",
-                Application::class.java,
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
-                        (param.args[0] as? Application)?.let { app ->
-                            UsageLog.d("hook: Application.onCreate in ${lpparam.packageName}")
-                            Thread { capture(app, force = true) }.start()
-                        }
-                    }
-                },
-            )
-            XposedHelpers.findAndHookMethod(
-                Activity::class.java,
-                "onResume",
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
-                        (param.thisObject as? Activity)?.applicationContext?.let { ctx ->
-                            Thread { capture(ctx, force = false) }.start()
-                        }
-                    }
-                },
-            )
-        }.onFailure { XposedBridge.log("Claude-o-phobia: hook on ${lpparam.packageName} failed: $it") }
+    override fun onPackageLoaded(param: PackageLoadedParam) {
+        // Only the first (main) package of a process carries the app's data dir and
+        // installs our process-wide capture hooks; secondary packages add nothing.
+        if (!param.isFirstPackage) return
+        when (param.packageName) {
+            // The system UI never carries a Claude cookie jar — skip it. Our own
+            // package is never loaded into us, so no self guard is needed.
+            "com.android.systemui" -> Unit
+            else -> {
+                log(Log.INFO, TAG, "loaded into ${param.packageName} — installing capture hooks")
+                hookClaude(param.packageName)
+            }
+        }
     }
 
     /**
@@ -95,25 +73,49 @@ class ClaudeHook : IXposedHookLoadPackage {
      * `PackageManagerInternal` service is registered, then call
      * [installVisibilityBypass].
      */
-    private fun hookSystem(lpparam: LoadPackageParam) {
+    override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        log(Log.INFO, TAG, "loaded into system_server — arming visibility bypass")
+        hookSystem(param.classLoader)
+    }
+
+    private fun hookClaude(packageName: String) {
         runCatching {
-            val pms = XposedHelpers.findClass(
-                "com.android.server.pm.PackageManagerService",
-                lpparam.classLoader,
+            val callApplicationOnCreate = Instrumentation::class.java.getDeclaredMethod(
+                "callApplicationOnCreate",
+                Application::class.java,
             )
-            XposedHelpers.findAndHookMethod(
-                pms,
-                "systemReady",
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
-                        installVisibilityBypass(lpparam.classLoader)
-                    }
-                },
-            )
-            XposedBridge.log("Claude-o-phobia: armed visibility bypass via PackageManagerService.systemReady")
+            hook(callApplicationOnCreate).intercept { chain ->
+                val result = chain.proceed()
+                (chain.args.firstOrNull() as? Application)?.let { app ->
+                    UsageLog.d("hook: Application.onCreate in $packageName")
+                    Thread { capture(app, force = true) }.start()
+                }
+                result
+            }
+            val onResume = Activity::class.java.getDeclaredMethod("onResume")
+            hook(onResume).intercept { chain ->
+                val result = chain.proceed()
+                (chain.thisObject as? Activity)?.applicationContext?.let { ctx ->
+                    Thread { capture(ctx, force = false) }.start()
+                }
+                result
+            }
+        }.onFailure { log(Log.ERROR, TAG, "hook on $packageName failed: $it", it) }
+    }
+
+    private fun hookSystem(classLoader: ClassLoader) {
+        runCatching {
+            val pms = classLoader.loadClass("com.android.server.pm.PackageManagerService")
+            val systemReady = pms.getDeclaredMethod("systemReady")
+            hook(systemReady).intercept { chain ->
+                val result = chain.proceed()
+                installVisibilityBypass(classLoader)
+                result
+            }
+            log(Log.INFO, TAG, "armed visibility bypass via PackageManagerService.systemReady")
         }.onFailure {
             UsageLog.e("hookSystem(): could not arm visibility bypass", it)
-            XposedBridge.log("Claude-o-phobia: hookSystem failed: $it")
+            log(Log.ERROR, TAG, "hookSystem failed: $it", it)
         }
     }
 
@@ -133,37 +135,59 @@ class ClaudeHook : IXposedHookLoadPackage {
      * refactor in particular), so we try several class names and report how many
      * methods we actually hooked to the LSPosed log — a `x0` there means the hook
      * didn't attach on this ROM and is the first thing to check.
+     *
+     * We reflect into `LocalServices`/`PackageManagerInternal` here, which lint
+     * flags as blocked private API. That restriction is for ordinary apps; this
+     * code only ever runs inside `system_server` (via [onSystemServerStarting]),
+     * where the hidden-API denylist doesn't apply — so the check is suppressed.
      */
+    @SuppressLint("BlockedPrivateApi")
     private fun installVisibilityBypass(classLoader: ClassLoader) {
         if (visibilityBypassInstalled) return
 
         var appsFilterHooks = 0
         for (name in APPS_FILTER_CLASSES) {
             runCatching {
-                val cls = XposedHelpers.findClass(name, classLoader)
-                appsFilterHooks += XposedBridge.hookAllMethods(cls, "shouldFilterApplication", shouldFilterHook).size
+                val cls = classLoader.loadClass(name)
+                appsFilterHooks += hookAllMethods(cls, "shouldFilterApplication", shouldFilterHook)
             }
         }
 
         var filterAppAccessHooks = 0
         runCatching {
-            val pmiClass = XposedHelpers.findClass("android.content.pm.PackageManagerInternal", classLoader)
-            val localServices = XposedHelpers.findClass("com.android.server.LocalServices", classLoader)
-            XposedHelpers.callStaticMethod(localServices, "getService", pmiClass)?.let { pmi ->
-                filterAppAccessHooks = XposedBridge.hookAllMethods(pmi.javaClass, "filterAppAccess", filterAppAccessHook).size
+            val pmiClass = classLoader.loadClass("android.content.pm.PackageManagerInternal")
+            val localServices = classLoader.loadClass("com.android.server.LocalServices")
+            val getService = localServices.getDeclaredMethod("getService", Class::class.java)
+            getService.invoke(null, pmiClass)?.let { pmi ->
+                filterAppAccessHooks = hookAllMethods(pmi.javaClass, "filterAppAccess", filterAppAccessHook)
             }
         }.onFailure { UsageLog.w("installVisibilityBypass(): filterAppAccess hook skipped: $it") }
 
         visibilityBypassInstalled = appsFilterHooks > 0 || filterAppAccessHooks > 0
         val report = "shouldFilterApplication x$appsFilterHooks, filterAppAccess x$filterAppAccessHooks"
         UsageLog.d("installVisibilityBypass(): $report (installed=$visibilityBypassInstalled)")
-        XposedBridge.log(
+        log(
+            Log.INFO,
+            TAG,
             if (visibilityBypassInstalled) {
-                "Claude-o-phobia: visibility bypass active — $report; $SELF_PACKAGE resolvable from any process"
+                "visibility bypass active — $report; $SELF_PACKAGE resolvable from any process"
             } else {
-                "Claude-o-phobia: visibility bypass FAILED to attach ($report) — check the LSPosed scope/version"
-            }
+                "visibility bypass FAILED to attach ($report) — check the LSPosed scope/version"
+            },
         )
+    }
+
+    /** Hooks every overload of [name] on [cls] with [hooker]; returns the count attached. */
+    private fun hookAllMethods(cls: Class<*>, name: String, hooker: XposedInterface.Hooker): Int {
+        var count = 0
+        for (method in cls.declaredMethods) {
+            if (method.name != name) continue
+            runCatching {
+                hook(method).intercept(hooker)
+                count++
+            }
+        }
+        return count
     }
 
     /**
@@ -171,35 +195,29 @@ class ClaudeHook : IXposedHookLoadPackage {
      * package is the caller or the target. Only objects that look like a package
      * setting/state are probed, so we avoid throwing on the snapshot/int args.
      */
-    private val shouldFilterHook = object : XC_MethodHook() {
-        override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
-            for (arg in param.args) {
-                if (arg == null) continue
-                val className = arg.javaClass.name
-                if (!className.contains("PackageSetting") &&
-                    !className.contains("PackageState") &&
-                    !className.contains("Setting")
-                ) continue
-                val pkg = runCatching { XposedHelpers.callMethod(arg, "getPackageName") as? String }.getOrNull()
-                if (pkg == SELF_PACKAGE) {
-                    param.result = false
-                    return
-                }
-            }
+    private val shouldFilterHook = XposedInterface.Hooker { chain ->
+        for (arg in chain.args) {
+            if (arg == null) continue
+            val className = arg.javaClass.name
+            if (!className.contains("PackageSetting") &&
+                !className.contains("PackageState") &&
+                !className.contains("Setting")
+            ) continue
+            val pkg = runCatching {
+                arg.javaClass.getMethod("getPackageName").invoke(arg) as? String
+            }.getOrNull()
+            if (pkg == SELF_PACKAGE) return@Hooker false
         }
+        chain.proceed()
     }
 
     /**
      * Backstop on `PackageManagerInternal.filterAppAccess`. Only the
      * `(String packageName, …)` overloads carry a target we can match; the
-     * `(int uid, …)` ones leave args[0] non-String and are left alone.
+     * `(int uid, …)` ones leave args[0] non-String and fall through to the original.
      */
-    private val filterAppAccessHook = object : XC_MethodHook() {
-        override fun beforeHookedMethod(param: XC_MethodHook.MethodHookParam) {
-            if (param.args.firstOrNull() as? String == SELF_PACKAGE) {
-                param.result = false
-            }
-        }
+    private val filterAppAccessHook = XposedInterface.Hooker { chain ->
+        if (chain.args.firstOrNull() as? String == SELF_PACKAGE) false else chain.proceed()
     }
 
     /**
@@ -246,7 +264,7 @@ class ClaudeHook : IXposedHookLoadPackage {
             lastPublishAt = now
         } catch (e: Throwable) {
             UsageLog.e("capture(): unexpected failure", e)
-            XposedBridge.log("Claude-o-phobia: capture failed: $e")
+            log(Log.ERROR, TAG, "capture failed: $e", e)
         }
     }
 
@@ -267,13 +285,14 @@ class ClaudeHook : IXposedHookLoadPackage {
         }
         result.onFailure {
             UsageLog.e("publish(): contentResolver.call failed", it)
-            XposedBridge.log("Claude-o-phobia: publish failed: $it")
+            log(Log.ERROR, TAG, "publish failed: $it", it)
         }.onSuccess {
             UsageLog.d("publish(): handed credentials to ${UsageProvider.AUTHORITY}")
         }
     }
 
     companion object {
+        private const val TAG = "Claude-o-phobia"
         private const val SELF_PACKAGE = "com.xiddoc.claudeophobia"
         private const val THROTTLE_MS = 60_000L
 

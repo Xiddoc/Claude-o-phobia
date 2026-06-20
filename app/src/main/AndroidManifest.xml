@@ -21,20 +21,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Claudeophobia">
 
-        <!-- LSPosed/Xposed module metadata. The entry class is listed in
-             assets/xposed_init. -->
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="Reads your live Claude usage from inside the Claude app to power the Claude-o-phobia countdown." />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/xposed_scope" />
+        <!-- The modern libxposed module metadata (entry class, scope, description,
+             API version) lives in META-INF/xposed/* — see module.prop,
+             java_init.list and scope.list under src/main/resources. -->
 
         <activity
             android:name=".MainActivity"
