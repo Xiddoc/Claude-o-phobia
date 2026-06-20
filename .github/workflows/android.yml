@@ -103,8 +103,11 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
+          # Reuse a single rolling tag so every master push updates the same
+          # release instead of spawning a new v1.0.<run> tag each time.
+          tag_name: latest
           name: Claude-o-phobia v1.0.${{ github.run_number }}
+          make_latest: true
           body: |
             Optimized, R8-minified release build from master (`${{ github.sha }}`).
           files: app/build/outputs/apk/release/*.apk
