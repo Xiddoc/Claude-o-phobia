@@ -10,6 +10,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import com.xiddoc.claudeophobia.notify.NudgeScheduler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -44,6 +48,19 @@ class MainActivity : ComponentActivity() {
         // for notification permission on Android 13+ so it can actually show.
         NudgeScheduler.ensureScheduled(applicationContext)
         maybeRequestNotificationPermission()
+
+        // Run the live countdown tick and the periodic usage sync only while the
+        // app is actually in the foreground. repeatOnLifecycle(STARTED) cancels
+        // both when we're backgrounded and restarts them on return, so a stopped
+        // app never burns battery ticking every second or waking the radio to
+        // poll Claude. (The widget and daily nudge keep working off the cache.)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { viewModel.runClock() }
+                launch { viewModel.runPeriodicSync() }
+            }
+        }
+
         setContent {
             ClaudeophobiaTheme {
                 Surface(

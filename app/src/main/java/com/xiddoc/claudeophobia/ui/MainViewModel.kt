@@ -66,16 +66,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val updateStatus: StateFlow<UpdateStatus> = _updateStatus.asStateFlow()
 
     init {
-        // Live clock.
-        viewModelScope.launch {
-            while (true) {
-                _now.value = Instant.now()
-                delay(1_000)
-            }
-        }
-
         // Refresh whenever the toggle flips or the module hands over fresher
-        // credentials, and on a gentle background cadence while enabled.
+        // credentials. This collector is event-driven (it only does work when a
+        // setting actually changes), so it's safe to leave on viewModelScope.
         viewModelScope.launch {
             settings
                 .map { Triple(it.liveUsageEnabled, it.credentialsCapturedAtMs, it.cookieHeader) }
@@ -84,13 +77,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (enabled) refreshUsage() else _usageResult.value = UsageResult.Disabled
                 }
         }
-        viewModelScope.launch {
-            while (true) {
-                val intervalMs = settings.value.syncIntervalMinutes
-                    .coerceAtLeast(1) * 60_000L
-                delay(intervalMs)
-                if (settings.value.liveUsageEnabled) refreshUsage()
-            }
+    }
+
+    /**
+     * Drives the once-a-second countdown tick. Suspends forever; cancel to stop.
+     *
+     * This is launched from the Activity under `repeatOnLifecycle(STARTED)` (not
+     * from [viewModelScope]) on purpose: viewModelScope only ends when the
+     * ViewModel is *cleared* (activity destroyed), so a tick loop placed there
+     * keeps waking the CPU once a second even while the app is backgrounded —
+     * a 1Hz background wake loop that nothing is on screen to observe is pure
+     * battery burn. Tying it to the lifecycle stops it the moment we leave the
+     * foreground and restarts it (re-seeding [_now]) when we return.
+     */
+    suspend fun runClock() {
+        while (true) {
+            _now.value = Instant.now()
+            delay(1_000)
+        }
+    }
+
+    /**
+     * Refreshes live usage on the user's chosen cadence while the app is in the
+     * foreground. Like [runClock], this is driven by the Activity's lifecycle
+     * rather than [viewModelScope] so a backgrounded app never wakes the radio
+     * to poll Claude — the widget and daily nudge reuse the cached figure
+     * instead. Suspends forever; cancel to stop.
+     */
+    suspend fun runPeriodicSync() {
+        while (true) {
+            val intervalMs = settings.value.syncIntervalMinutes
+                .coerceAtLeast(1) * 60_000L
+            delay(intervalMs)
+            if (settings.value.liveUsageEnabled) refreshUsage()
         }
     }
 
