@@ -2,6 +2,16 @@
 
 <p align="center"><em>An elegant Android app that counts down to your weekly Claude limit reset — because waiting for that fresh week of usage is the best kind of anticipation. 🧡</em></p>
 
+## Gallery
+
+<p align="center"><em>Home screen</em></p>
+
+![](pics/home.jpg)
+
+<p align="center"><em>Widget</em></p>
+
+![](pics/widget.jpg)
+
 ## Features
 
 - **🕑 Live countdown** to the next weekly reset, inside a ring that fills up as
