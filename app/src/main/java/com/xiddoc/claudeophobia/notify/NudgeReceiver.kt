@@ -26,13 +26,25 @@ class NudgeReceiver : BroadcastReceiver() {
         // onReceive, so a bounded runBlocking is acceptable here.
         val settings = runBlocking { SettingsRepository(appContext).settings.first() }
         val progress = settings.resetConfig.progress(Instant.now())
+        val epochDay = LocalDate.now().toEpochDay()
 
-        val nudge = WeeklyNudges.forDay(
-            epochDay = LocalDate.now().toEpochDay(),
-            weekFraction = progress.fraction,
-            resetDay = settings.resetConfig.dayOfWeek,
-        )
-        Notifications.show(appContext, nudge)
+        // Refresh the widget and re-arm tomorrow's alarm every day regardless, so
+        // the glance card stays fresh; only the notification itself is thinned to
+        // the user's chosen weekly frequency.
+        if (WeeklyNudges.shouldNudgeOn(epochDay, settings.notificationsPerWeek)) {
+            // Quote real progress only when the LSPosed live-usage feature is on and
+            // has handed us a figure; otherwise we can only speak to the clock.
+            val usagePercent = settings.lastWeeklyUsagePercent
+                ?.takeIf { settings.liveUsageEnabled }
+                ?.toInt()
+            val nudge = WeeklyNudges.forDay(
+                epochDay = epochDay,
+                weekFraction = progress.fraction,
+                resetDay = settings.resetConfig.dayOfWeek,
+                usagePercent = usagePercent,
+            )
+            Notifications.show(appContext, nudge)
+        }
         UsageWidget.refresh(appContext)
 
         NudgeScheduler.scheduleNext(appContext)

@@ -31,6 +31,13 @@ data class AppSettings(
      */
     val syncIntervalMinutes: Int = DEFAULT_SYNC_INTERVAL_MINUTES,
     /**
+     * How many pacing nudges to post across each week. The daily alarm still wakes
+     * once a day; this just thins which days actually notify, evenly spread (see
+     * [WeeklyNudges.shouldNudgeOn]). 7 means every day (the original behaviour),
+     * 1 means once a week. Defaults to every day.
+     */
+    val notificationsPerWeek: Int = DEFAULT_NOTIFICATIONS_PER_WEEK,
+    /**
      * Whether the home-screen widget shows a pacing cue — a faint "where you
      * should be" marker on the bar plus an ahead/under-pace verdict in the
      * caption — comparing live usage against how much of the week has elapsed.
@@ -72,6 +79,12 @@ data class AppSettings(
 
         /** The cadences offered in Settings, in minutes. */
         val SYNC_INTERVAL_OPTIONS = listOf(5, 15, 30, 60)
+
+        /** Default nudge frequency: one a day, matching the original behaviour. */
+        const val DEFAULT_NOTIFICATIONS_PER_WEEK = 7
+
+        /** The per-week nudge counts offered in Settings (1..7). */
+        val NOTIFICATIONS_PER_WEEK_OPTIONS = listOf(1, 2, 3, 5, 7)
     }
 }
 
@@ -92,6 +105,8 @@ class SettingsRepository(private val context: Context) {
             fiveHourWindowEnabled = prefs[KEY_FIVE_HOUR_ENABLED] ?: true,
             syncIntervalMinutes = prefs[KEY_SYNC_INTERVAL]
                 ?: AppSettings.DEFAULT_SYNC_INTERVAL_MINUTES,
+            notificationsPerWeek = prefs[KEY_NOTIFS_PER_WEEK]
+                ?: AppSettings.DEFAULT_NOTIFICATIONS_PER_WEEK,
             widgetPacingEnabled = prefs[KEY_WIDGET_PACING] ?: true,
             cookieHeader = prefs[KEY_COOKIE],
             orgId = prefs[KEY_ORG],
@@ -161,6 +176,11 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_SYNC_INTERVAL] = minutes.coerceAtLeast(1) }
     }
 
+    /** Sets how many pacing nudges to post per week (clamped to 0..7). */
+    suspend fun setNotificationsPerWeek(perWeek: Int) {
+        context.dataStore.edit { it[KEY_NOTIFS_PER_WEEK] = perWeek.coerceIn(0, 7) }
+    }
+
     suspend fun setWidgetPacingEnabled(enabled: Boolean) {
         context.dataStore.edit { it[KEY_WIDGET_PACING] = enabled }
     }
@@ -173,6 +193,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_LIVE_ENABLED = booleanPreferencesKey("live_usage_enabled")
         private val KEY_FIVE_HOUR_ENABLED = booleanPreferencesKey("five_hour_window_enabled")
         private val KEY_SYNC_INTERVAL = intPreferencesKey("sync_interval_minutes")
+        private val KEY_NOTIFS_PER_WEEK = intPreferencesKey("notifications_per_week")
         private val KEY_WIDGET_PACING = booleanPreferencesKey("widget_pacing_enabled")
         private val KEY_COOKIE = stringPreferencesKey("live_cookie_header")
         private val KEY_ORG = stringPreferencesKey("live_org_id")
