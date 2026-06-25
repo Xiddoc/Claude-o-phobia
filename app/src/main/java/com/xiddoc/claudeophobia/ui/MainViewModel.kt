@@ -203,6 +203,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.setSyncIntervalMinutes(minutes) }
     }
 
+    /** Updates how many pacing nudges are posted each week. */
+    fun setNotificationsPerWeek(perWeek: Int) {
+        viewModelScope.launch { repository.setNotificationsPerWeek(perWeek) }
+    }
+
     fun setWidgetPacingEnabled(enabled: Boolean) {
         viewModelScope.launch {
             repository.setWidgetPacingEnabled(enabled)

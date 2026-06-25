@@ -24,6 +24,10 @@
 - **🎯 A widget pacing cue** (toggleable in Settings) — a faint "where you should
   be" marker on the widget's bar at the point you've reached in the week, plus a
   line telling you whether your live usage is *ahead of* or *under* that pace.
+- **🔔 Friendly pace nudges** — a gentle daily check-in on where the week is at.
+  Dial the frequency down to as few as one a week in Settings, and (with live
+  usage on) some nudges quote how much of your weekly limit you've actually used
+  or have left.
   
 
 ## Installing

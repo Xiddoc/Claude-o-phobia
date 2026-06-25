@@ -124,6 +124,31 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
+            // ---- Notification frequency ----------------------------------
+            InfoCard(title = "Notification frequency") {
+                Text(
+                    text = "Pacing nudges per week",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(8.dp))
+                NotificationFrequencyPicker(
+                    selected = settings.notificationsPerWeek,
+                    onSelected = { viewModel.setNotificationsPerWeek(it) },
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "How many friendly pace check-ins to send across the week, " +
+                        "spread out evenly. 7 is one a day; pick fewer for a quieter " +
+                        "nudge. With live usage on, some of them quote how much of your " +
+                        "weekly limit you've actually used.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceMuted,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
             // ---- Live usage (LSPosed) ------------------------------------
             InfoCard(title = "Live usage via LSPosed") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -253,6 +278,33 @@ private fun SyncIntervalPicker(
                 label = {
                     Text(
                         text = if (minutes < 60) "$minutes min" else "${minutes / 60} hr",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                modifier = Modifier.weight(1f),
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = ClaudeClay,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotificationFrequencyPicker(
+    selected: Int,
+    onSelected: (Int) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AppSettings.NOTIFICATIONS_PER_WEEK_OPTIONS.forEach { perWeek ->
+            FilterChip(
+                selected = perWeek == selected,
+                onClick = { onSelected(perWeek) },
+                label = {
+                    Text(
+                        text = "$perWeek/wk",
                         modifier = Modifier.fillMaxWidth(),
                     )
                 },
