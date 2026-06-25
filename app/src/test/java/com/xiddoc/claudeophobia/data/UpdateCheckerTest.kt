@@ -62,6 +62,38 @@ class UpdateCheckerTest {
     }
 
     @Test
+    fun extractsVersionFromTagOrName() {
+        assertEquals("1.0.108", VersionCompare.extractVersion("v1.0.108"))
+        assertEquals("1.0.108", VersionCompare.extractVersion("Claude-o-phobia v1.0.108"))
+        assertEquals("2.0", VersionCompare.extractVersion("release 2.0 final"))
+        assertEquals(null, VersionCompare.extractVersion("latest"))
+        assertEquals(null, VersionCompare.extractVersion(""))
+        assertEquals(null, VersionCompare.extractVersion(null))
+    }
+
+    @Test
+    fun readsVersionFromNameWhenTagIsRollingLatest() {
+        // CI publishes every master build under a single rolling `latest` tag and
+        // keeps the real version in the release name. The check must still detect
+        // updates instead of always reporting "up to date".
+        val body = """
+            {
+              "tag_name": "latest",
+              "name": "Claude-o-phobia v1.0.108",
+              "html_url": "https://github.com/Xiddoc/Claude-o-phobia/releases/tag/latest",
+              "assets": [
+                {"browser_download_url": "https://example.com/app-release.apk"}
+              ]
+            }
+        """.trimIndent()
+        val latest = UpdateChecker.parseLatest(body)
+        assertEquals("1.0.108", latest.versionName)
+        assertEquals("https://example.com/app-release.apk", latest.downloadUrl)
+        assertTrue(VersionCompare.isNewer(latest.versionName, "1.0.42"))
+        assertFalse(VersionCompare.isNewer(latest.versionName, "1.0.108"))
+    }
+
+    @Test
     fun fallsBackToReleasePageWhenNoApkAsset() {
         val body = """
             {

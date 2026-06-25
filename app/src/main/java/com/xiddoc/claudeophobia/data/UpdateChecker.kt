@@ -7,11 +7,13 @@ import java.net.URL
 /**
  * Checks GitHub Releases for a newer Claude-o-phobia build than the one running.
  *
- * The release workflow tags each master build `v1.0.<run>` and attaches the
- * optimized APK (see `.github/workflows/android.yml`), and the same run number is
- * baked into the installed `versionName`. So "is there an update?" is just: does
- * the latest release's version sort higher than ours? Nothing here is
- * authenticated — it's a plain GET against the public releases API.
+ * The release workflow publishes every master build under a single rolling
+ * `latest` tag and puts the actual version in the release *name*
+ * (`Claude-o-phobia v1.0.<run>`); the same run number is baked into the installed
+ * `versionName` (see `.github/workflows/android.yml`). So "is there an update?" is
+ * just: does the latest release's version sort higher than ours? Because the tag
+ * itself is no longer a version, we pull the version out of the name. Nothing here
+ * is authenticated — it's a plain GET against the public releases API.
  */
 object UpdateChecker {
 
@@ -60,8 +62,16 @@ object UpdateChecker {
     /** Parses the `releases/latest` payload into a [LatestRelease]. Visible for testing. */
     fun parseLatest(body: String): LatestRelease {
         val root = JSONObject(body)
-        val tag = root.optString("tag_name").ifBlank { root.optString("name") }
-        val version = VersionCompare.strip(tag)
+        // CI publishes every master build under one rolling `latest` tag, so the
+        // tag is no longer a version. Read the version from the tag when it's a
+        // numeric one (older per-push `v1.0.<run>` tags), otherwise from the
+        // release name (`Claude-o-phobia v1.0.<run>`), falling back to the
+        // stripped tag/name for anything else.
+        val tag = root.optString("tag_name")
+        val name = root.optString("name")
+        val version = VersionCompare.extractVersion(tag)
+            ?: VersionCompare.extractVersion(name)
+            ?: VersionCompare.strip(tag.ifBlank { name })
 
         // Prefer the attached .apk asset so "Download" lands straight on the file;
         // fall back to the release page (and then the releases tab) otherwise.
@@ -92,6 +102,18 @@ object VersionCompare {
     /** Drops a leading `v`/`V` and surrounding whitespace from a tag. */
     fun strip(raw: String?): String =
         raw?.trim()?.removePrefix("v")?.removePrefix("V")?.trim().orEmpty()
+
+    /** Matches the first dotted-numeric run, e.g. `1.0.108` in `Claude-o-phobia v1.0.108`. */
+    private val VERSION_TOKEN = Regex("""\d+(?:\.\d+)+""")
+
+    /**
+     * Pulls the first dotted-numeric version out of arbitrary text (a tag like
+     * `v1.0.108` or a release name like `Claude-o-phobia v1.0.108`), or null when
+     * there's no version-like token. Lets the update check survive the rolling
+     * `latest` tag, where the version lives in the release name rather than the tag.
+     */
+    fun extractVersion(raw: String?): String? =
+        raw?.let { VERSION_TOKEN.find(it)?.value }
 
     /** Splits a version into its numeric components, ignoring any non-numeric tail. */
     fun parts(raw: String?): List<Int> =
