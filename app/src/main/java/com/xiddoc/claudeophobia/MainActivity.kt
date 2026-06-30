@@ -14,6 +14,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
+import com.xiddoc.claudeophobia.notify.HistorySampler
 import com.xiddoc.claudeophobia.notify.NudgeScheduler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import com.xiddoc.claudeophobia.ui.MainViewModel
 import com.xiddoc.claudeophobia.ui.screens.AboutScreen
 import com.xiddoc.claudeophobia.ui.screens.CountdownScreen
+import com.xiddoc.claudeophobia.ui.screens.HistoryScreen
 import com.xiddoc.claudeophobia.ui.screens.SettingsScreen
 import com.xiddoc.claudeophobia.ui.theme.ClaudeophobiaTheme
 
@@ -44,9 +46,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        // Arm the once-a-day pacing nudge (no-op if already scheduled) and ask
-        // for notification permission on Android 13+ so it can actually show.
+        // Arm the once-a-day pacing nudge and the 3-hour progress sampler (both
+        // no-op if already scheduled) and ask for notification permission on
+        // Android 13+ so the nudge can actually show.
         NudgeScheduler.ensureScheduled(applicationContext)
+        HistorySampler.ensureScheduled(applicationContext)
         maybeRequestNotificationPermission()
 
         // Run the live countdown tick and the periodic usage sync only while the
@@ -67,7 +71,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    var screen by remember { mutableStateOf(Screen.Home) }
+                    val startScreen = if (intent?.action == ACTION_OPEN_HISTORY) {
+                        Screen.History
+                    } else {
+                        Screen.Home
+                    }
+                    var screen by remember { mutableStateOf(startScreen) }
                     // System back returns to the home screen instead of exiting.
                     BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
                     AnimatedContent(
@@ -86,10 +95,16 @@ class MainActivity : ComponentActivity() {
                                 onBack = { screen = Screen.Home },
                             )
 
+                            Screen.History -> HistoryScreen(
+                                viewModel = viewModel,
+                                onBack = { screen = Screen.Home },
+                            )
+
                             Screen.Home -> CountdownScreen(
                                 viewModel = viewModel,
                                 onOpenSettings = { screen = Screen.Settings },
                                 onOpenAbout = { screen = Screen.About },
+                                onOpenHistory = { screen = Screen.History },
                             )
                         }
                     }
@@ -108,7 +123,12 @@ class MainActivity : ComponentActivity() {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+
+    companion object {
+        /** Deep-link action the graph widget uses to open straight to the history screen. */
+        const val ACTION_OPEN_HISTORY = "com.xiddoc.claudeophobia.OPEN_HISTORY"
+    }
 }
 
 /** Top-level destinations the single activity swaps between. */
-private enum class Screen { Home, Settings, About }
+private enum class Screen { Home, Settings, About, History }

@@ -54,6 +54,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Weekly-progress sampler: fires every 3 hours to record the cached usage
+             figure (no network). Internal only. -->
+        <receiver
+            android:name=".notify.HistorySampleReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.xiddoc.claudeophobia.SAMPLE_FIRE" />
+            </intent-filter>
+        </receiver>
+
         <!-- Home-screen widget (renders locally; never contacts Claude). -->
         <receiver
             android:name=".widget.UsageWidget"
@@ -65,6 +75,34 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/usage_widget_info" />
+        </receiver>
+
+        <!-- Circular weekly-pace widget (RemoteViews twin of the in-app ring). -->
+        <receiver
+            android:name=".widget.CircleUsageWidget"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/circle_widget_info" />
+        </receiver>
+
+        <!-- Weekly-progress graph widget (Bezier curve + derivative, locally rendered).
+             Also handles its own GRAPH_NAV broadcasts for tap week-navigation. -->
+        <receiver
+            android:name=".widget.HistoryGraphWidget"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.xiddoc.claudeophobia.GRAPH_NAV" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/graph_widget_info" />
         </receiver>
 
         <!-- Inbound bridge: the LSPosed module (running in the Claude process)

@@ -3,4 +3,8 @@
     <string name="settings">Settings</string>
     <string name="back">Back</string>
     <string name="widget_description">Your weekly Claude pace at a glance.</string>
+    <string name="graph_widget_description">Your weekly Claude progress, graphed.</string>
+    <string name="circle_widget_description">Your weekly Claude pace as a ring.</string>
+    <string name="graph_prev_week">Previous week</string>
+    <string name="graph_next_week">Next week</string>
 </resources>

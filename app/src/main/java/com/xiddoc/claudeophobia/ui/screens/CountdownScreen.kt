@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -30,13 +31,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xiddoc.claudeophobia.data.Pacing
 import com.xiddoc.claudeophobia.data.UsageResult
+import com.xiddoc.claudeophobia.data.bucketsFor
+import com.xiddoc.claudeophobia.data.weekKeyFor
 import com.xiddoc.claudeophobia.ui.MainViewModel
+import com.xiddoc.claudeophobia.ui.components.GraphLegend
 import com.xiddoc.claudeophobia.ui.components.InfoCard
 import com.xiddoc.claudeophobia.ui.components.LinearMeter
 import com.xiddoc.claudeophobia.ui.components.StatRow
+import com.xiddoc.claudeophobia.ui.components.UsageHistoryGraph
 import com.xiddoc.claudeophobia.ui.formatCountdown
 import com.xiddoc.claudeophobia.ui.formatPercent
 import com.xiddoc.claudeophobia.ui.formatRelative
@@ -52,11 +58,13 @@ fun CountdownScreen(
     viewModel: MainViewModel,
     onOpenSettings: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenHistory: () -> Unit,
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val now by viewModel.now.collectAsStateWithLifecycle()
     val usageResult by viewModel.usageResult.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
 
     val progress = settings.resetConfig.progress(now)
 
@@ -154,6 +162,50 @@ fun CountdownScreen(
                 )
                 Spacer(Modifier.height(12.dp))
                 LinearMeter(progress = progress.fraction.toFloat())
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // This week's recorded progress, as a curved graph. Tap to swipe through
+            // previous weeks on the full history screen.
+            val weeks = remember(history, settings.resetConfig) {
+                bucketsFor(history, settings.resetConfig)
+            }
+            val currentWeek = remember(weeks, now, settings.resetConfig) {
+                val key = weekKeyFor(now.toEpochMilli(), settings.resetConfig)
+                weeks.firstOrNull { it.weekStartMs == key }
+            }
+            InfoCard(
+                title = "Weekly progress",
+                actionLabel = "History",
+                onAction = onOpenHistory,
+            ) {
+                if (currentWeek == null || currentWeek.samples.isEmpty()) {
+                    Text(
+                        text = "No progress recorded this week yet. Your weekly usage is " +
+                            "saved every 3 hours once live usage is on — then it curves here.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = OnSurfaceMuted,
+                    )
+                } else {
+                    // Quantize the "now" marker (~0.25% ≈ 25 min of a week) so the
+                    // once-a-second countdown tick doesn't re-rasterize the blurred
+                    // curve every second; UsageHistoryGraph skips while this is equal.
+                    val todayFraction = (progress.fraction * 400).toInt() / 400f
+                    UsageHistoryGraph(
+                        week = currentWeek,
+                        tension = settings.graphCurveTension,
+                        showDerivative = settings.showDerivative,
+                        glow = true,
+                        todayFraction = todayFraction,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp)
+                            .clickable(onClick = onOpenHistory),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    GraphLegend(showDerivative = settings.showDerivative)
+                }
             }
 
             Spacer(Modifier.height(16.dp))

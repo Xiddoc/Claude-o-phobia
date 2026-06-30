@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -69,6 +70,29 @@ data class AppSettings(
     val lastWeeklyUsagePercent: Double? = null,
     /** When [lastWeeklyUsagePercent] was captured (epoch millis), or 0 if never. */
     val lastUsageTimestampMs: Long = 0L,
+    /**
+     * Whether the every-3-hours weekly-progress sampler runs. When off, the alarm
+     * still re-arms (so re-enabling needs no app launch) but records nothing. The
+     * sampler only ever stores the already-cached live figure — no extra battery
+     * or network — so this defaults on.
+     */
+    val historySamplingEnabled: Boolean = true,
+    /**
+     * Curve smoothing for the progress graph, fed straight into
+     * [GraphMath.smoothPath] as the Catmull-Rom tension. 0 = straight polyline,
+     * higher = curvier. Defaults to a slight Bezier curve.
+     */
+    val graphCurveTension: Float = GraphMath.TENSION_SLIGHT,
+    /** Whether the "gained per day" derivative overlay is drawn on the graph. */
+    val showDerivative: Boolean = true,
+    /**
+     * Whether the graph widget's bitmap gets the warm LED bloom. Off by default:
+     * the blur is the heaviest part of a bitmap render and the graph's fill is
+     * wide, so we keep the widget battery-light unless the user opts in.
+     */
+    val graphWidgetGlow: Boolean = false,
+    /** Whether the circular widget's arc gets the glow (on, for parity with the in-app ring). */
+    val circleWidgetGlow: Boolean = true,
 ) {
     /** Whether the module has handed us a usable session cookie yet. */
     val hasCredentials: Boolean get() = !cookieHeader.isNullOrBlank()
@@ -85,6 +109,13 @@ data class AppSettings(
 
         /** The per-week nudge counts offered in Settings (1..7). */
         val NOTIFICATIONS_PER_WEEK_OPTIONS = listOf(1, 2, 3, 5, 7)
+
+        /** Graph curve-tension presets surfaced in Settings: Straight / Slight / Smooth. */
+        val CURVE_TENSION_OPTIONS = listOf(
+            GraphMath.TENSION_STRAIGHT,
+            GraphMath.TENSION_SLIGHT,
+            GraphMath.TENSION_SMOOTH,
+        )
     }
 }
 
@@ -115,6 +146,11 @@ class SettingsRepository(private val context: Context) {
             credentialsCapturedAtMs = prefs[KEY_CRED_AT] ?: 0L,
             lastWeeklyUsagePercent = prefs[KEY_LAST_WEEKLY_PCT],
             lastUsageTimestampMs = prefs[KEY_LAST_USAGE_TS] ?: 0L,
+            historySamplingEnabled = prefs[KEY_HISTORY_SAMPLING] ?: true,
+            graphCurveTension = prefs[KEY_GRAPH_TENSION] ?: GraphMath.TENSION_SLIGHT,
+            showDerivative = prefs[KEY_SHOW_DERIVATIVE] ?: true,
+            graphWidgetGlow = prefs[KEY_GRAPH_GLOW] ?: false,
+            circleWidgetGlow = prefs[KEY_CIRCLE_GLOW] ?: true,
         )
     }
 
@@ -185,6 +221,31 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_WIDGET_PACING] = enabled }
     }
 
+    /** Pauses/resumes the 3-hour weekly-progress sampler. */
+    suspend fun setHistorySamplingEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_HISTORY_SAMPLING] = enabled }
+    }
+
+    /** Sets the progress-graph curve tension (clamped to a sane 0..1). */
+    suspend fun setGraphCurveTension(tension: Float) {
+        context.dataStore.edit { it[KEY_GRAPH_TENSION] = tension.coerceIn(0f, 1f) }
+    }
+
+    /** Toggles the "gained per day" derivative overlay on the graph. */
+    suspend fun setShowDerivative(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_SHOW_DERIVATIVE] = enabled }
+    }
+
+    /** Toggles the warm glow on the graph widget bitmap. */
+    suspend fun setGraphWidgetGlow(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_GRAPH_GLOW] = enabled }
+    }
+
+    /** Toggles the warm glow on the circular widget arc. */
+    suspend fun setCircleWidgetGlow(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_CIRCLE_GLOW] = enabled }
+    }
+
     companion object {
         private val KEY_DAY = intPreferencesKey("reset_day_of_week")
         private val KEY_HOUR = intPreferencesKey("reset_hour")
@@ -202,5 +263,10 @@ class SettingsRepository(private val context: Context) {
         private val KEY_CRED_AT = longPreferencesKey("live_cred_captured_at")
         private val KEY_LAST_WEEKLY_PCT = doublePreferencesKey("last_weekly_pct")
         private val KEY_LAST_USAGE_TS = longPreferencesKey("last_usage_ts")
+        private val KEY_HISTORY_SAMPLING = booleanPreferencesKey("history_sampling_enabled")
+        private val KEY_GRAPH_TENSION = floatPreferencesKey("graph_curve_tension")
+        private val KEY_SHOW_DERIVATIVE = booleanPreferencesKey("graph_show_derivative")
+        private val KEY_GRAPH_GLOW = booleanPreferencesKey("graph_widget_glow")
+        private val KEY_CIRCLE_GLOW = booleanPreferencesKey("circle_widget_glow")
     }
 }

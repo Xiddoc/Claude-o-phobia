@@ -1,0 +1,77 @@
+package com.xiddoc.claudeophobia.notify
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import com.xiddoc.claudeophobia.data.SettingsRepository
+import com.xiddoc.claudeophobia.data.UsageHistoryRepository
+import com.xiddoc.claudeophobia.widget.CircleUsageWidget
+import com.xiddoc.claudeophobia.widget.HistoryGraphWidget
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlin.math.roundToInt
+
+/**
+ * Fires every 3 hours (see [HistorySampler]) to record one weekly-progress data
+ * point, then re-arms.
+ *
+ * Battery contract — this receiver must stay cheap and **offline**:
+ *
+ *  - It NEVER imports or calls [com.xiddoc.claudeophobia.data.LiveUsageReader] or
+ *    any claude.ai path. It records only the figure the live-usage flow already
+ *    cached ([SettingsRepository] `lastWeeklyUsagePercent`). No radio wakeup is
+ *    ever attributable to sampling.
+ *  - It records nothing unless live usage is enabled *and* the cache is fresh,
+ *    exactly mirroring how [NudgeReceiver] gates `lastWeeklyUsagePercent`, so a
+ *    stale or absent figure can never fabricate a flat fake line.
+ *  - It pushes a redraw to the home-screen widgets only when the appended point
+ *    actually changed, avoiding cross-process bitmap marshaling for no reason.
+ *
+ * The `runBlocking` reads stay bounded (one settings read, one history append) —
+ * the same justification [NudgeReceiver] relies on — and never await a network call.
+ */
+class HistorySampleReceiver : BroadcastReceiver() {
+
+    override fun onReceive(context: Context, intent: Intent) {
+        val app = context.applicationContext
+        try {
+            val settings = runBlocking { SettingsRepository(app).settings.first() }
+            if (!settings.historySamplingEnabled) {
+                // Paused: do no work, but keep the alarm alive so re-enabling needs
+                // no app launch.
+                HistorySampler.scheduleNext(app)
+                return
+            }
+
+            val nowMs = System.currentTimeMillis()
+            val raw = settings.lastWeeklyUsagePercent?.takeIf { settings.liveUsageEnabled }
+            val fresh = settings.lastUsageTimestampMs != 0L &&
+                nowMs - settings.lastUsageTimestampMs <= STALE_MS
+
+            if (raw != null && raw.isFinite() && fresh) {
+                val pct = raw.coerceIn(0.0, 100.0).roundToInt() // clamp the Double BEFORE toInt
+                val repo = UsageHistoryRepository(app)
+                val last = runBlocking { repo.lastSampleMs() }
+                if (UsageHistoryRepository.shouldAppend(last, nowMs, HistorySampler.SAMPLE_INTERVAL_MS)) {
+                    val changed = runBlocking { repo.appendSample(nowMs, pct, settings.resetConfig) }
+                    if (changed) {
+                        HistoryGraphWidget.refresh(app)
+                        CircleUsageWidget.refresh(app)
+                    }
+                }
+            } else {
+                Log.d("ClaudeUsage", "HistorySampleReceiver: no fresh live figure — recording nothing")
+            }
+        } catch (t: Throwable) {
+            Log.e("ClaudeUsage", "HistorySampleReceiver: sample failed", t)
+        } finally {
+            HistorySampler.scheduleNext(app) // always re-arm
+        }
+    }
+
+    companion object {
+        /** A cached figure older than this is treated as stale and not recorded (7 days). */
+        const val STALE_MS = 7L * 24 * 60 * 60 * 1000
+    }
+}
