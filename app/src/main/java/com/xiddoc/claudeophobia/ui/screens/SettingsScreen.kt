@@ -176,6 +176,14 @@ fun SettingsScreen(
                         selected = settings.syncIntervalMinutes,
                         onSelected = { viewModel.setSyncIntervalMinutes(it) },
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Also the cadence the progress graph samples at. In the " +
+                            "background the system batches these with other wake-ups, so a " +
+                            "short interval won't wake your phone every few minutes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceMuted,
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -218,6 +226,115 @@ fun SettingsScreen(
                         "the week, plus a line telling you whether your live usage is " +
                         "ahead of or under that pace. Needs live usage to compare " +
                         "against; until then the widget just shows the week elapsed.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceMuted,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Usage history sampler -----------------------------------
+            InfoCard(
+                title = "Usage history",
+                actionLabel = "Clear",
+                onAction = { viewModel.clearHistory() },
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Record my weekly progress",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = settings.historySamplingEnabled,
+                        onCheckedChange = { viewModel.setHistorySamplingEnabled(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Saves your weekly usage at your Live Usage sync interval, " +
+                        "reusing the figure live usage already fetched — no extra battery " +
+                        "or network. Kept forever to draw the progress graph. Needs live " +
+                        "usage on to have anything to record. Clear wipes the saved history.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceMuted,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Graph style ---------------------------------------------
+            InfoCard(title = "Graph style") {
+                Text(
+                    text = "Curve smoothing",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(8.dp))
+                CurveTensionPicker(
+                    selected = settings.graphCurveTension,
+                    onSelected = { viewModel.setGraphCurveTension(it) },
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Show gained-per-day overlay",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = settings.showDerivative,
+                        onCheckedChange = { viewModel.setShowDerivative(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "The overlay draws how much progress you gained each day (the " +
+                        "derivative) as faint bars beneath the curve.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceMuted,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Widget glow ---------------------------------------------
+            InfoCard(title = "Widget glow") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Glow on the ring widget",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = settings.circleWidgetGlow,
+                        onCheckedChange = { viewModel.setCircleWidgetGlow(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Glow on the graph widget",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = settings.graphWidgetGlow,
+                        onCheckedChange = { viewModel.setGraphWidgetGlow(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = ClaudeClay),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "The warm bloom is the heaviest part of a widget redraw. It's on " +
+                        "for the ring and off for the graph by default — flip either to taste.",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceMuted,
                 )
@@ -316,6 +433,42 @@ private fun NotificationFrequencyPicker(
             )
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CurveTensionPicker(
+    selected: Float,
+    onSelected: (Float) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AppSettings.CURVE_TENSION_OPTIONS.forEach { tension ->
+            FilterChip(
+                // Match on the nearest option so a stored intermediate value still
+                // highlights the right chip.
+                selected = kotlin.math.abs(tension - selected) < 0.01f ||
+                    AppSettings.CURVE_TENSION_OPTIONS.minByOrNull { kotlin.math.abs(it - selected) } == tension,
+                onClick = { onSelected(tension) },
+                label = {
+                    Text(
+                        text = tensionLabel(tension),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                modifier = Modifier.weight(1f),
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = ClaudeClay,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            )
+        }
+    }
+}
+
+private fun tensionLabel(tension: Float): String = when {
+    tension <= 0.01f -> "Straight"
+    tension < 0.7f -> "Slight"
+    else -> "Smooth"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

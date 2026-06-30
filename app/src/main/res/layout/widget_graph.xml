@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tall graph rendering. Caps header on top, a navigation row (prev arrow · week
+  label · next arrow), the rasterized curve filling the remaining height, and a
+  caption with the date range + legend. Shares its view IDs with
+  widget_graph_compact.xml so one render path feeds both sizes.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="14dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/app_name"
+        android:textColor="#A39B8D"
+        android:textSize="11sp"
+        android:letterSpacing="0.08"
+        android:textAllCaps="true"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:fontFamily="sans-serif-medium" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="4dp"
+        android:gravity="center_vertical">
+
+        <ImageButton
+            android:id="@+id/graph_prev"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_widget_chevron_left"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter"
+            android:contentDescription="@string/graph_prev_week" />
+
+        <TextView
+            android:id="@+id/graph_week_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="This week"
+            android:textColor="#ECE6DD"
+            android:textSize="13sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium" />
+
+        <ImageButton
+            android:id="@+id/graph_next"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/ic_widget_chevron_right"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter"
+            android:contentDescription="@string/graph_next_week" />
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/graph_image"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="6dp"
+        android:scaleType="fitXY"
+        android:adjustViewBounds="false"
+        android:contentDescription="@string/graph_widget_description" />
+
+    <TextView
+        android:id="@+id/graph_caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text=""
+        android:textColor="#A39B8D"
+        android:textSize="11sp"
+        android:maxLines="1"
+        android:ellipsize="end" />
+</LinearLayout>

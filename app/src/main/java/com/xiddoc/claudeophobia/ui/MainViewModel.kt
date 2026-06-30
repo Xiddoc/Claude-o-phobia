@@ -6,15 +6,20 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xiddoc.claudeophobia.data.AppSettings
 import com.xiddoc.claudeophobia.data.ClaudePrefs
+import com.xiddoc.claudeophobia.data.History
 import com.xiddoc.claudeophobia.data.LiveUsageReader
 import com.xiddoc.claudeophobia.data.ModuleStatus
 import com.xiddoc.claudeophobia.data.ResetConfig
 import com.xiddoc.claudeophobia.data.SettingsRepository
 import com.xiddoc.claudeophobia.data.UpdateChecker
 import com.xiddoc.claudeophobia.data.UpdateStatus
+import com.xiddoc.claudeophobia.data.UsageHistoryRepository
 import com.xiddoc.claudeophobia.data.UsageLog
 import com.xiddoc.claudeophobia.data.UsageResult
 import com.xiddoc.claudeophobia.data.VersionCompare
+import com.xiddoc.claudeophobia.notify.HistorySampler
+import com.xiddoc.claudeophobia.widget.CircleUsageWidget
+import com.xiddoc.claudeophobia.widget.HistoryGraphWidget
 import com.xiddoc.claudeophobia.widget.UsageWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -24,6 +29,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -34,10 +40,15 @@ import java.time.ZoneId
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = SettingsRepository(application)
+    private val historyRepository = UsageHistoryRepository(application)
     private val reader = LiveUsageReader()
 
     val settings: StateFlow<AppSettings> = repository.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
+
+    /** The recorded weekly-progress history, for the graph and the history screen. */
+    val history: StateFlow<History> = historyRepository.history
+        .stateIn(viewModelScope, SharingStarted.Eagerly, History(emptyList()))
 
     /** Ticks once per second so the countdown stays live. */
     private val _now = MutableStateFlow(Instant.now())
@@ -132,10 +143,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val result = reader.read(current, rebootNeeded)
                 _usageResult.value = result
                 if (result is UsageResult.Found) {
-                    // Cache for the widget + daily nudge so neither makes its own
-                    // request, and push the fresh figure to any placed widget.
+                    // Cache for the widgets + daily nudge so neither makes its own
+                    // request, and push the fresh figure to the live-usage widgets
+                    // (flat + circle both show "used this week").
                     repository.cacheLiveUsage(result.snapshot.weeklyUtilizationPercent)
-                    UsageWidget.refresh(getApplication<Application>())
+                    val app = getApplication<Application>()
+                    UsageWidget.refresh(app)
+                    CircleUsageWidget.refresh(app)
                 }
             } finally {
                 // Hold the spinner just long enough to read as a deliberate retry
@@ -198,9 +212,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.setFiveHourWindowEnabled(enabled) }
     }
 
-    /** Updates how often live usage is refreshed while the app is open. */
+    /**
+     * Updates how often live usage is refreshed while the app is open — and, since
+     * the progress sampler shares this cadence, reschedules the sampler so the new
+     * interval takes effect immediately instead of at the next (old-interval) fire.
+     */
     fun setSyncIntervalMinutes(minutes: Int) {
-        viewModelScope.launch { repository.setSyncIntervalMinutes(minutes) }
+        viewModelScope.launch {
+            repository.setSyncIntervalMinutes(minutes)
+            val s = repository.settings.first()
+            if (s.historySamplingEnabled) {
+                HistorySampler.scheduleNext(getApplication(), HistorySampler.intervalMsOf(s))
+            }
+        }
     }
 
     /** Updates how many pacing nudges are posted each week. */
@@ -211,8 +235,82 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setWidgetPacingEnabled(enabled: Boolean) {
         viewModelScope.launch {
             repository.setWidgetPacingEnabled(enabled)
-            // Re-render any placed widget so the cue appears/disappears at once.
-            UsageWidget.refresh(getApplication())
+            // Re-render the pace-aware widgets so the cue appears/disappears at once.
+            val app = getApplication<Application>()
+            UsageWidget.refresh(app)
+            CircleUsageWidget.refresh(app)
+        }
+    }
+
+    /** Pauses/resumes the weekly-progress sampler and (un)arms its alarm. */
+    fun setHistorySamplingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setHistorySamplingEnabled(enabled)
+            val app = getApplication<Application>()
+            if (enabled) {
+                val s = repository.settings.first()
+                HistorySampler.ensureScheduled(app, HistorySampler.intervalMsOf(s))
+            } else {
+                HistorySampler.cancel(app)
+            }
+        }
+    }
+
+    /**
+     * Reconciles the sampler alarm with the persisted setting on app start: arm it
+     * (at the live-usage sync interval) if sampling is enabled, otherwise make sure
+     * no stale alarm lingers. Reads the real persisted value off the main thread so
+     * a disabled sampler is never re-armed just by opening the app.
+     */
+    fun ensureHistorySamplerScheduled() {
+        viewModelScope.launch {
+            val s = repository.settings.first()
+            val app = getApplication<Application>()
+            if (s.historySamplingEnabled) {
+                HistorySampler.ensureScheduled(app, HistorySampler.intervalMsOf(s))
+            } else {
+                HistorySampler.cancel(app)
+            }
+        }
+    }
+
+    /** Sets the progress-graph curve tension and re-renders the graph widget. */
+    fun setGraphCurveTension(tension: Float) {
+        viewModelScope.launch {
+            repository.setGraphCurveTension(tension)
+            HistoryGraphWidget.refresh(getApplication())
+        }
+    }
+
+    /** Toggles the derivative overlay and re-renders the graph widget. */
+    fun setShowDerivative(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setShowDerivative(enabled)
+            HistoryGraphWidget.refresh(getApplication())
+        }
+    }
+
+    /** Toggles the graph widget glow and re-renders it. */
+    fun setGraphWidgetGlow(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setGraphWidgetGlow(enabled)
+            HistoryGraphWidget.refresh(getApplication())
+        }
+    }
+
+    /** Toggles the circular widget glow and re-renders it. */
+    fun setCircleWidgetGlow(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setCircleWidgetGlow(enabled)
+            CircleUsageWidget.refresh(getApplication())
+        }
+    }
+
+    /** Wipes all recorded weekly-progress history and refreshes the graph widget. */
+    fun clearHistory() {
+        viewModelScope.launch {
+            historyRepository.clear()
+            HistoryGraphWidget.refresh(getApplication())
         }
     }
 
