@@ -71,10 +71,10 @@ data class AppSettings(
     /** When [lastWeeklyUsagePercent] was captured (epoch millis), or 0 if never. */
     val lastUsageTimestampMs: Long = 0L,
     /**
-     * Whether the every-3-hours weekly-progress sampler runs. When off, the alarm
-     * still re-arms (so re-enabling needs no app launch) but records nothing. The
-     * sampler only ever stores the already-cached live figure — no extra battery
-     * or network — so this defaults on.
+     * Whether the weekly-progress sampler runs. It fires at the Live Usage sync
+     * interval ([syncIntervalMinutes]) and stores only the already-cached live
+     * figure — no extra battery or network — so this defaults on. When off, its
+     * alarm is cancelled and nothing is recorded.
      */
     val historySamplingEnabled: Boolean = true,
     /**
@@ -221,7 +221,7 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_WIDGET_PACING] = enabled }
     }
 
-    /** Pauses/resumes the 3-hour weekly-progress sampler. */
+    /** Pauses/resumes the weekly-progress sampler. */
     suspend fun setHistorySamplingEnabled(enabled: Boolean) {
         context.dataStore.edit { it[KEY_HISTORY_SAMPLING] = enabled }
     }

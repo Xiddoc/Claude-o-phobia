@@ -122,6 +122,33 @@ object GraphMath {
         return out
     }
 
+    /** Default cap on how many sample dots a renderer draws (keeps fine cadences legible). */
+    const val DEFAULT_MAX_DOTS = 48
+
+    /**
+     * Thins [points] to at most [maxDots] roughly-evenly-spaced markers, always
+     * keeping the first and last, so the dotted overlay stays legible at any
+     * sampling cadence (a short interval can produce hundreds of points per week).
+     * Returns the list unchanged when it already fits.
+     */
+    fun thinForDots(points: List<Vec2>, maxDots: Int = DEFAULT_MAX_DOTS): List<Vec2> {
+        val n = points.size
+        if (maxDots < 1 || n == 0) return emptyList()
+        if (n <= maxDots) return points
+        val out = ArrayList<Vec2>(maxDots + 1)
+        val step = (n - 1).toDouble() / (maxDots - 1).coerceAtLeast(1)
+        var lastIdx = -1
+        for (k in 0 until maxDots) {
+            val idx = (k * step).toInt().coerceIn(0, n - 1)
+            if (idx != lastIdx) {
+                out.add(points[idx])
+                lastIdx = idx
+            }
+        }
+        if (lastIdx != n - 1) out.add(points[n - 1])
+        return out
+    }
+
     /**
      * The magnitude that maps a derivative band to full height. At least 1f so a
      * flat or empty week never divides by zero; otherwise the largest absolute

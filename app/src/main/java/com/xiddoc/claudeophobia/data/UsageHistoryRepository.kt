@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.map
  * widget's pinned week lives under its own key in the same store.
  *
  * Every mutation goes through `DataStore.edit {}`, which serializes writes, so the
- * 3-hourly append, the per-widget navigation taps, and a manual "clear" can never
+ * periodic append, the per-widget navigation taps, and a manual "clear" can never
  * race or corrupt each other.
  */
 private val Context.historyDataStore: DataStore<Preferences> by preferencesDataStore(name = "usage_history")

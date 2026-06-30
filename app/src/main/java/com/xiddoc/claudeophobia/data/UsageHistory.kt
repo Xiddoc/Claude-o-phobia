@@ -152,7 +152,8 @@ private fun List<Sample>.dedupeByTs(): List<Sample> {
  *
  * [decode] is *total*: a corrupt line or token is skipped, never thrown, so a
  * single bad byte can never wipe years of history. Round-trips are unit-tested.
- * At ~12-16 bytes per sample a 5-year, 3-hourly history is well under a megabyte.
+ * At ~12-16 bytes per sample even a multi-year history stays modest (a few MB at
+ * the finest cadence), and a [UsageHistoryRepository.MAX_WEEKS] cap backstops it.
  */
 object HistoryCodec {
 

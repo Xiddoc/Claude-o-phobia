@@ -129,8 +129,8 @@ fun UsageHistoryGraph(
             )
         }
 
-        // Sample dots.
-        for (p in points) {
+        // Sample dots, thinned so a fine sampling cadence stays legible.
+        for (p in GraphMath.thinForDots(points)) {
             drawCircle(color = ClaudeClayBright, radius = 3.dp.toPx(), center = Offset(px(p.x), py(p.y)))
         }
 

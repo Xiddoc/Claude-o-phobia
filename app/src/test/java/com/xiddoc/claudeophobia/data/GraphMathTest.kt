@@ -141,6 +141,26 @@ class GraphMathTest {
         assertNull(GraphMath.olderWeek(emptyList(), null))
     }
 
+    // --- thinForDots ------------------------------------------------------
+
+    @Test
+    fun thinForDotsKeepsSmallSetsUntouched() {
+        val pts = (0..5).map { Vec2(it / 5f, 0f) }
+        assertEquals(pts, GraphMath.thinForDots(pts, 48))
+        assertTrue(GraphMath.thinForDots(emptyList(), 48).isEmpty())
+    }
+
+    @Test
+    fun thinForDotsCapsLargeSetsKeepingEndsAndOrder() {
+        val pts = (0 until 672).map { Vec2(it / 671f, 0f) } // a week of 15-min samples
+        val thinned = GraphMath.thinForDots(pts, 48)
+        assertTrue("size ${thinned.size}", thinned.size <= 49)
+        assertEquals(pts.first(), thinned.first())
+        assertEquals(pts.last(), thinned.last())
+        // Strictly increasing x — no duplicates, original order preserved.
+        for (i in 1 until thinned.size) assertTrue(thinned[i].x > thinned[i - 1].x)
+    }
+
     @Test
     fun resolveWeekSnapsMissingPinToNearest() {
         val w = weeks(100, 200, 300)

@@ -96,9 +96,9 @@ fun HistoryScreen(
             if (weeks.isEmpty()) {
                 InfoCard(title = "No history yet") {
                     Text(
-                        text = "Your weekly Claude usage is recorded every 3 hours once " +
-                            "live usage is enabled. As soon as the first few points land, " +
-                            "they'll curve here — swipe to browse past weeks.",
+                        text = "Your weekly Claude usage is recorded at your Live Usage " +
+                            "sync interval once live usage is enabled. As soon as the first " +
+                            "few points land, they'll curve here — swipe to browse past weeks.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = OnSurfaceMuted,
                     )

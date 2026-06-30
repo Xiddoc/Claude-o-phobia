@@ -176,6 +176,14 @@ fun SettingsScreen(
                         selected = settings.syncIntervalMinutes,
                         onSelected = { viewModel.setSyncIntervalMinutes(it) },
                     )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Also the cadence the progress graph samples at. In the " +
+                            "background the system batches these with other wake-ups, so a " +
+                            "short interval won't wake your phone every few minutes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceMuted,
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -246,10 +254,10 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Saves your weekly usage every 3 hours using the figure live " +
-                        "usage already fetched — no extra battery or network. Kept forever " +
-                        "to draw the progress graph. Needs live usage on to have anything " +
-                        "to record. Clear wipes the saved history.",
+                    text = "Saves your weekly usage at your Live Usage sync interval, " +
+                        "reusing the figure live usage already fetched — no extra battery " +
+                        "or network. Kept forever to draw the progress graph. Needs live " +
+                        "usage on to have anything to record. Clear wipes the saved history.",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceMuted,
                 )

@@ -183,7 +183,8 @@ fun CountdownScreen(
                 if (currentWeek == null || currentWeek.samples.isEmpty()) {
                     Text(
                         text = "No progress recorded this week yet. Your weekly usage is " +
-                            "saved every 3 hours once live usage is on — then it curves here.",
+                            "saved at your Live Usage sync interval once live usage is on — " +
+                            "then it curves here.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = OnSurfaceMuted,
                     )

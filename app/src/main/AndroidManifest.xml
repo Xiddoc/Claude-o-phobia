@@ -54,8 +54,8 @@
             </intent-filter>
         </receiver>
 
-        <!-- Weekly-progress sampler: fires every 3 hours to record the cached usage
-             figure (no network). Internal only. -->
+        <!-- Weekly-progress sampler: fires at the Live Usage sync interval to record
+             the cached usage figure (no network). Internal only. -->
         <receiver
             android:name=".notify.HistorySampleReceiver"
             android:exported="false">

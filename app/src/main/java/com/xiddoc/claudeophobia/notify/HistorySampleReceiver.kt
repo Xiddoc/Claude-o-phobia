@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.xiddoc.claudeophobia.data.AppSettings
 import com.xiddoc.claudeophobia.data.SettingsRepository
 import com.xiddoc.claudeophobia.data.UsageHistoryRepository
 import com.xiddoc.claudeophobia.widget.CircleUsageWidget
@@ -13,8 +14,8 @@ import kotlinx.coroutines.runBlocking
 import kotlin.math.roundToInt
 
 /**
- * Fires every 3 hours (see [HistorySampler]) to record one weekly-progress data
- * point, then re-arms.
+ * Fires at the Live Usage sync interval (see [HistorySampler]) to record one
+ * weekly-progress data point, then re-arms.
  *
  * Battery contract — this receiver must stay cheap and **offline**:
  *
@@ -38,9 +39,11 @@ class HistorySampleReceiver : BroadcastReceiver() {
         // Default to re-arming if the settings read fails, so a transient error
         // never silently kills sampling; an explicit disable below clears it.
         var enabled = true
+        var intervalMs = DEFAULT_INTERVAL_MS
         try {
             val settings = runBlocking { SettingsRepository(app).settings.first() }
             enabled = settings.historySamplingEnabled
+            intervalMs = HistorySampler.intervalMsOf(settings)
             if (!enabled) {
                 // Paused: do no work and let the alarm lapse (the finally re-arms
                 // only while enabled), so a disabled sampler can't self-perpetuate.
@@ -56,7 +59,7 @@ class HistorySampleReceiver : BroadcastReceiver() {
                 val pct = raw.coerceIn(0.0, 100.0).roundToInt() // clamp the Double BEFORE toInt
                 val repo = UsageHistoryRepository(app)
                 val last = runBlocking { repo.lastSampleMs() }
-                if (UsageHistoryRepository.shouldAppend(last, nowMs, HistorySampler.SAMPLE_INTERVAL_MS)) {
+                if (UsageHistoryRepository.shouldAppend(last, nowMs, intervalMs)) {
                     val changed = runBlocking { repo.appendSample(nowMs, pct, settings.resetConfig) }
                     if (changed) {
                         HistoryGraphWidget.refresh(app)
@@ -69,15 +72,20 @@ class HistorySampleReceiver : BroadcastReceiver() {
         } catch (t: Throwable) {
             Log.e("ClaudeUsage", "HistorySampleReceiver: sample failed", t)
         } finally {
-            // Re-arm only while sampling is enabled. A disabled toggle also cancels
-            // the pending alarm (MainViewModel.setHistorySamplingEnabled), so a late
-            // fire here must not resurrect it.
-            if (enabled) HistorySampler.scheduleNext(app)
+            // Re-arm only while sampling is enabled, at the current sync interval. A
+            // disabled toggle also cancels the pending alarm
+            // (MainViewModel.setHistorySamplingEnabled), so a late fire here must not
+            // resurrect it.
+            if (enabled) HistorySampler.scheduleNext(app, intervalMs)
         }
     }
 
     companion object {
         /** A cached figure older than this is treated as stale and not recorded (7 days). */
         const val STALE_MS = 7L * 24 * 60 * 60 * 1000
+
+        /** Fallback cadence if the settings read fails (matches the default sync interval). */
+        private val DEFAULT_INTERVAL_MS =
+            AppSettings.DEFAULT_SYNC_INTERVAL_MINUTES * 60_000L
     }
 }

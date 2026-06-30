@@ -212,9 +212,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.setFiveHourWindowEnabled(enabled) }
     }
 
-    /** Updates how often live usage is refreshed while the app is open. */
+    /**
+     * Updates how often live usage is refreshed while the app is open — and, since
+     * the progress sampler shares this cadence, reschedules the sampler so the new
+     * interval takes effect immediately instead of at the next (old-interval) fire.
+     */
     fun setSyncIntervalMinutes(minutes: Int) {
-        viewModelScope.launch { repository.setSyncIntervalMinutes(minutes) }
+        viewModelScope.launch {
+            repository.setSyncIntervalMinutes(minutes)
+            val s = repository.settings.first()
+            if (s.historySamplingEnabled) {
+                HistorySampler.scheduleNext(getApplication(), HistorySampler.intervalMsOf(s))
+            }
+        }
     }
 
     /** Updates how many pacing nudges are posted each week. */
@@ -232,26 +242,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Pauses/resumes the 3-hour weekly-progress sampler and (un)arms its alarm. */
+    /** Pauses/resumes the weekly-progress sampler and (un)arms its alarm. */
     fun setHistorySamplingEnabled(enabled: Boolean) {
         viewModelScope.launch {
             repository.setHistorySamplingEnabled(enabled)
             val app = getApplication<Application>()
-            if (enabled) HistorySampler.ensureScheduled(app) else HistorySampler.cancel(app)
+            if (enabled) {
+                val s = repository.settings.first()
+                HistorySampler.ensureScheduled(app, HistorySampler.intervalMsOf(s))
+            } else {
+                HistorySampler.cancel(app)
+            }
         }
     }
 
     /**
      * Reconciles the sampler alarm with the persisted setting on app start: arm it
-     * if sampling is enabled, otherwise make sure no stale alarm lingers. Reads the
-     * real persisted value off the main thread so a disabled sampler is never
-     * re-armed just by opening the app.
+     * (at the live-usage sync interval) if sampling is enabled, otherwise make sure
+     * no stale alarm lingers. Reads the real persisted value off the main thread so
+     * a disabled sampler is never re-armed just by opening the app.
      */
     fun ensureHistorySamplerScheduled() {
         viewModelScope.launch {
-            val enabled = repository.settings.first().historySamplingEnabled
+            val s = repository.settings.first()
             val app = getApplication<Application>()
-            if (enabled) HistorySampler.ensureScheduled(app) else HistorySampler.cancel(app)
+            if (s.historySamplingEnabled) {
+                HistorySampler.ensureScheduled(app, HistorySampler.intervalMsOf(s))
+            } else {
+                HistorySampler.cancel(app)
+            }
         }
     }
 

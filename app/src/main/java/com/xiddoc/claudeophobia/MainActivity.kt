@@ -46,8 +46,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // Arm the once-a-day pacing nudge (no-op if already scheduled), reconcile
-        // the 3-hour sampler alarm with its on/off setting, and ask for notification
-        // permission on Android 13+ so the nudge can actually show.
+        // the progress sampler alarm with its on/off setting, and ask for
+        // notification permission on Android 13+ so the nudge can actually show.
         NudgeScheduler.ensureScheduled(applicationContext)
         viewModel.ensureHistorySamplerScheduled()
         maybeRequestNotificationPermission()

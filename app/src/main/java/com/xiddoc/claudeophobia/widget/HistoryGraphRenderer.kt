@@ -115,14 +115,15 @@ object HistoryGraphRenderer {
             canvas.drawPath(path, linePaint)
         }
 
-        // Sample dots (always drawn, so even a single-sample week shows something).
+        // Sample dots, thinned so a fine sampling cadence stays legible (still shows
+        // something for a single-sample week).
         if (points.isNotEmpty()) {
             val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.FILL
                 color = DOT
             }
             val dotR = (h * 0.022f).coerceIn(2f, 10f)
-            for (p in points) canvas.drawCircle(px(p.x), py(p.y), dotR, dotPaint)
+            for (p in GraphMath.thinForDots(points)) canvas.drawCircle(px(p.x), py(p.y), dotR, dotPaint)
         }
 
         return bmp
