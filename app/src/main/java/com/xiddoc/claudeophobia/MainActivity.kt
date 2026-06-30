@@ -14,7 +14,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
-import com.xiddoc.claudeophobia.notify.HistorySampler
 import com.xiddoc.claudeophobia.notify.NudgeScheduler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -46,11 +45,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        // Arm the once-a-day pacing nudge and the 3-hour progress sampler (both
-        // no-op if already scheduled) and ask for notification permission on
-        // Android 13+ so the nudge can actually show.
+        // Arm the once-a-day pacing nudge (no-op if already scheduled), reconcile
+        // the 3-hour sampler alarm with its on/off setting, and ask for notification
+        // permission on Android 13+ so the nudge can actually show.
         NudgeScheduler.ensureScheduled(applicationContext)
-        HistorySampler.ensureScheduled(applicationContext)
+        viewModel.ensureHistorySamplerScheduled()
         maybeRequestNotificationPermission()
 
         // Run the live countdown tick and the periodic usage sync only while the

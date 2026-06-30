@@ -35,11 +35,15 @@ class HistorySampleReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext
+        // Default to re-arming if the settings read fails, so a transient error
+        // never silently kills sampling; an explicit disable below clears it.
+        var enabled = true
         try {
             val settings = runBlocking { SettingsRepository(app).settings.first() }
-            if (!settings.historySamplingEnabled) {
-                // Paused: do no work. The finally block still re-arms the alarm so
-                // re-enabling needs no app launch.
+            enabled = settings.historySamplingEnabled
+            if (!enabled) {
+                // Paused: do no work and let the alarm lapse (the finally re-arms
+                // only while enabled), so a disabled sampler can't self-perpetuate.
                 return
             }
 
@@ -65,7 +69,10 @@ class HistorySampleReceiver : BroadcastReceiver() {
         } catch (t: Throwable) {
             Log.e("ClaudeUsage", "HistorySampleReceiver: sample failed", t)
         } finally {
-            HistorySampler.scheduleNext(app) // always re-arm
+            // Re-arm only while sampling is enabled. A disabled toggle also cancels
+            // the pending alarm (MainViewModel.setHistorySamplingEnabled), so a late
+            // fire here must not resurrect it.
+            if (enabled) HistorySampler.scheduleNext(app)
         }
     }
 

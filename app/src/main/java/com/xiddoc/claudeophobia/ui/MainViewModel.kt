@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -235,6 +236,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setHistorySamplingEnabled(enabled: Boolean) {
         viewModelScope.launch {
             repository.setHistorySamplingEnabled(enabled)
+            val app = getApplication<Application>()
+            if (enabled) HistorySampler.ensureScheduled(app) else HistorySampler.cancel(app)
+        }
+    }
+
+    /**
+     * Reconciles the sampler alarm with the persisted setting on app start: arm it
+     * if sampling is enabled, otherwise make sure no stale alarm lingers. Reads the
+     * real persisted value off the main thread so a disabled sampler is never
+     * re-armed just by opening the app.
+     */
+    fun ensureHistorySamplerScheduled() {
+        viewModelScope.launch {
+            val enabled = repository.settings.first().historySamplingEnabled
             val app = getApplication<Application>()
             if (enabled) HistorySampler.ensureScheduled(app) else HistorySampler.cancel(app)
         }

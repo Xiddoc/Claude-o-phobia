@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.DisplayMetrics
+import android.util.Log
 import android.util.SizeF
 import android.widget.RemoteViews
 import com.xiddoc.claudeophobia.MainActivity
@@ -54,7 +55,23 @@ class HistoryGraphWidget : AppWidgetProvider() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == ACTION_NAV) {
-            navigate(context, intent)
+            val widgetId = intent.getIntExtra(EXTRA_WIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+            val delta = intent.getIntExtra(EXTRA_DELTA, 0)
+            if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
+            // Decoding the (potentially years-long) history blob + rasterizing the
+            // bitmap must not block the main thread on a tap. goAsync() keeps the
+            // process alive while we do it on a background thread.
+            val pending = goAsync()
+            val appContext = context.applicationContext
+            Thread {
+                try {
+                    navigateAndRender(appContext, widgetId, delta)
+                } catch (t: Throwable) {
+                    Log.e("ClaudeUsage", "HistoryGraphWidget: nav failed", t)
+                } finally {
+                    pending.finish()
+                }
+            }.start()
         } else {
             // Let APPWIDGET_UPDATE / APPWIDGET_DELETED dispatch normally so
             // onUpdate / onDeleted still run.
@@ -68,27 +85,30 @@ class HistoryGraphWidget : AppWidgetProvider() {
         ids.forEach { WidgetBitmaps.release(TAG, it) }
     }
 
-    private fun navigate(context: Context, intent: Intent) {
-        val widgetId = intent.getIntExtra(EXTRA_WIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
-        if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) return
-        val delta = intent.getIntExtra(EXTRA_DELTA, 0)
+    /**
+     * Resolves the navigation target, persists the new pinned week, and re-renders
+     * — all on the caller's background thread, decoding the history blob exactly
+     * once and reusing those weeks for the render (no second decode).
+     */
+    private fun navigateAndRender(context: Context, widgetId: Int, delta: Int) {
         val manager = AppWidgetManager.getInstance(context) ?: return
-        runBlocking {
-            val repo = UsageHistoryRepository(context)
-            val settings = SettingsRepository(context).settings.first()
-            val weeks = bucketsFor(repo.snapshot(), settings.resetConfig)
-            if (weeks.isEmpty()) return@runBlocking
-            val resolved = GraphMath.resolveWeek(weeks, repo.getWidgetWeek(widgetId))
+        val repo = UsageHistoryRepository(context)
+        val settings = runBlocking { SettingsRepository(context).settings.first() }
+        val weeks = runBlocking { bucketsFor(repo.snapshot(), settings.resetConfig) }
+        var pinned = runBlocking { repo.getWidgetWeek(widgetId) }
+        if (weeks.isNotEmpty()) {
+            val resolved = GraphMath.resolveWeek(weeks, pinned)
             val basis = resolved?.weekStartMs
             val target = if (delta < 0) GraphMath.olderWeek(weeks, basis) else GraphMath.newerWeek(weeks, basis)
             if (target != null) {
                 // Snap-to-current (store null) when we land on the newest week so the
                 // widget follows the live week from then on.
                 val store = if (target == weeks.last().weekStartMs) null else target
-                repo.setWidgetWeek(widgetId, store)
+                runBlocking { repo.setWidgetWeek(widgetId, store) }
+                pinned = store
             }
         }
-        renderInto(context, manager, widgetId)
+        render(context, manager, widgetId, settings, weeks, pinned)
     }
 
     companion object {
@@ -108,6 +128,18 @@ class HistoryGraphWidget : AppWidgetProvider() {
             val repo = UsageHistoryRepository(context)
             val weeks = runBlocking { bucketsFor(repo.snapshot(), settings.resetConfig) }
             val pinned = runBlocking { repo.getWidgetWeek(widgetId) }
+            render(context, manager, widgetId, settings, weeks, pinned)
+        }
+
+        /** Builds and pushes the widget from already-decoded data (no further history decode). */
+        private fun render(
+            context: Context,
+            manager: AppWidgetManager,
+            widgetId: Int,
+            settings: com.xiddoc.claudeophobia.data.AppSettings,
+            weeks: List<WeekBucket>,
+            pinned: Long?,
+        ) {
             val resolved = GraphMath.resolveWeek(weeks, pinned)
             val basis = resolved?.weekStartMs
 
