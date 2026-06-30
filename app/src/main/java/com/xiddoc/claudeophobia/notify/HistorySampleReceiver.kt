@@ -38,9 +38,8 @@ class HistorySampleReceiver : BroadcastReceiver() {
         try {
             val settings = runBlocking { SettingsRepository(app).settings.first() }
             if (!settings.historySamplingEnabled) {
-                // Paused: do no work, but keep the alarm alive so re-enabling needs
-                // no app launch.
-                HistorySampler.scheduleNext(app)
+                // Paused: do no work. The finally block still re-arms the alarm so
+                // re-enabling needs no app launch.
                 return
             }
 
