@@ -36,6 +36,7 @@ import com.xiddoc.claudeophobia.ui.MainViewModel
 import com.xiddoc.claudeophobia.ui.components.GraphLegend
 import com.xiddoc.claudeophobia.ui.components.InfoCard
 import com.xiddoc.claudeophobia.ui.components.UsageHistoryGraph
+import com.xiddoc.claudeophobia.ui.components.WeeklyGainGraph
 import com.xiddoc.claudeophobia.ui.theme.OnSurfaceMuted
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -192,7 +193,6 @@ private fun WeekPager(
                 UsageHistoryGraph(
                     week = week,
                     tension = settings.graphCurveTension,
-                    showDerivative = settings.showDerivative,
                     glow = true,
                     todayFraction = todayFraction,
                     modifier = Modifier.fillMaxWidth().height(220.dp),
@@ -209,7 +209,6 @@ private fun WeekPager(
                 UsageHistoryGraph(
                     week = week,
                     tension = settings.graphCurveTension,
-                    showDerivative = settings.showDerivative,
                     glow = true,
                     todayFraction = todayFraction,
                     modifier = Modifier.fillMaxWidth().height(220.dp),
@@ -224,7 +223,11 @@ private fun WeekPager(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            GraphLegend(showDerivative = settings.showDerivative)
+            GraphLegend()
+            if (settings.showDerivative && week.samples.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                WeeklyGainGraph(week = week, modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }

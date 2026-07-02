@@ -43,6 +43,7 @@ import com.xiddoc.claudeophobia.ui.components.InfoCard
 import com.xiddoc.claudeophobia.ui.components.LinearMeter
 import com.xiddoc.claudeophobia.ui.components.StatRow
 import com.xiddoc.claudeophobia.ui.components.UsageHistoryGraph
+import com.xiddoc.claudeophobia.ui.components.WeeklyGainGraph
 import com.xiddoc.claudeophobia.ui.formatCountdown
 import com.xiddoc.claudeophobia.ui.formatPercent
 import com.xiddoc.claudeophobia.ui.formatRelative
@@ -196,7 +197,6 @@ fun CountdownScreen(
                     UsageHistoryGraph(
                         week = currentWeek,
                         tension = settings.graphCurveTension,
-                        showDerivative = settings.showDerivative,
                         glow = true,
                         todayFraction = todayFraction,
                         modifier = Modifier
@@ -205,7 +205,11 @@ fun CountdownScreen(
                             .clickable(onClick = onOpenHistory),
                     )
                     Spacer(Modifier.height(8.dp))
-                    GraphLegend(showDerivative = settings.showDerivative)
+                    GraphLegend()
+                    if (settings.showDerivative) {
+                        Spacer(Modifier.height(16.dp))
+                        WeeklyGainGraph(week = currentWeek, modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
 

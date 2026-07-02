@@ -5,6 +5,7 @@ import android.graphics.RectF
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -61,11 +63,12 @@ private val GRID_LEVELS = listOf(0.25f, 0.5f, 0.75f, 1f)
 private val TOOLTIP_FMT = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault())
 
 /**
- * The in-app weekly-progress graph: a slightly Bezier-curved progress line with an
- * optional "gained per day" derivative overlay, sample dots, faint percentage
- * gridlines, and a "now" marker for the current week. Shares the exact [GraphMath]
- * geometry with the home-screen widget's bitmap renderer, so the two can never
- * disagree — only the canvas differs.
+ * The in-app weekly-progress graph: a slightly Bezier-curved progress line with
+ * sample dots, faint percentage gridlines, and a "now" marker for the current
+ * week. The "gained per day" derivative now lives in its own [WeeklyGainGraph]
+ * below, rather than overlaying the curve. Shares the exact [GraphMath] geometry
+ * with the home-screen widget's bitmap renderer, so the two can never disagree —
+ * only the canvas differs.
  *
  * The risky numeric work (0/1/2 points, NaN, gaps, overshoot) all lives in
  * [GraphMath]; this composable only maps the 0..1 unit square into pixels (y is
@@ -79,7 +82,6 @@ private val TOOLTIP_FMT = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.ge
 fun UsageHistoryGraph(
     week: WeekBucket?,
     tension: Float,
-    showDerivative: Boolean,
     glow: Boolean,
     todayFraction: Float?,
     modifier: Modifier = Modifier,
@@ -172,37 +174,6 @@ fun UsageHistoryGraph(
         val end = week?.weekEndMs ?: 0L
         val points = GraphMath.toPoints(samples, start, end)
 
-        // Derivative overlay (behind the line).
-        if (showDerivative && week != null) {
-            val deriv = GraphMath.dailyDerivative(samples, start, end)
-            if (deriv.isNotEmpty()) {
-                val scale = GraphMath.derivativeScale(deriv)
-                val zeroY = top + contentH * 0.80f
-                val bandHalf = contentH * 0.18f
-                val barW = (contentW / (deriv.size * 2f)).coerceIn(2f, contentW * 0.08f)
-                drawLine(
-                    color = OnSurfaceMuted.copy(alpha = 0.25f),
-                    start = Offset(left, zeroY),
-                    end = Offset(left + contentW, zeroY),
-                    strokeWidth = 1.dp.toPx(),
-                )
-                for (d in deriv) {
-                    val cx = px(d.xMid)
-                    val frac = (d.deltaPerDay / scale).coerceIn(-1f, 1f)
-                    val barH = frac * bandHalf
-                    val color = if (d.deltaPerDay < 0f) DangerRed.copy(alpha = 0.5f)
-                    else ClaudeClay.copy(alpha = 0.35f)
-                    val topY = if (barH >= 0f) zeroY - barH else zeroY
-                    val h = kotlin.math.abs(barH)
-                    drawRect(
-                        color = color,
-                        topLeft = Offset(cx - barW / 2f, topY),
-                        size = Size(barW, h),
-                    )
-                }
-            }
-        }
-
         // The progress curve.
         val segs = GraphMath.smoothPath(points, tension)
         if (segs.isNotEmpty()) {
@@ -252,10 +223,101 @@ fun UsageHistoryGraph(
     }
 }
 
-/** A compact legend for the graph: the clay progress line and the derivative bars. */
+/**
+ * The "gained per day" companion chart, shown directly under [UsageHistoryGraph]
+ * when the derivative is enabled. Each bar is a calendar day's progress delta,
+ * grown from a baseline (up for gains in clay, down for the rare drop in red), so
+ * it's easy to read *how fast* progress was earned without it fighting the curve
+ * for space. Auto-scales to the week's biggest move via [GraphMath.derivativeScale].
+ *
+ * A header row labels it and doubles as the legend, so the main graph no longer
+ * has to. Empty / degenerate weeks draw nothing but the frame.
+ */
+@Composable
+fun WeeklyGainGraph(
+    week: WeekBucket?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(
+                Modifier
+                    .width(10.dp)
+                    .height(10.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(ClaudeClay.copy(alpha = 0.55f)),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "Gained / day",
+                style = MaterialTheme.typography.labelSmall,
+                color = OnSurfaceMuted,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp),
+        ) {
+            val padX = size.width * 0.02f
+            val padY = size.height * 0.12f
+            val left = padX
+            val top = padY
+            val contentW = (size.width - 2 * padX).coerceAtLeast(1f)
+            val contentH = (size.height - 2 * padY).coerceAtLeast(1f)
+
+            val deriv = GraphMath.dailyDerivative(
+                week?.samples.orEmpty(),
+                week?.weekStartMs ?: 0L,
+                week?.weekEndMs ?: 0L,
+            )
+            if (deriv.isEmpty()) return@Canvas
+            val scale = GraphMath.derivativeScale(deriv)
+
+            // Keep the zero line at the bottom when nothing ever dropped (the common
+            // case: progress only climbs), so bars grow up from the floor. Lift it to
+            // leave room below only when a genuine drop needs to be shown.
+            val hasNeg = deriv.any { it.deltaPerDay < 0f }
+            val zeroY = if (hasNeg) top + contentH * 0.72f else top + contentH
+            val posBand = zeroY - top
+            val negBand = (top + contentH) - zeroY
+            val barW = (contentW / (deriv.size * 1.6f)).coerceIn(3.dp.toPx(), contentW * 0.1f)
+
+            drawLine(
+                color = OnSurfaceMuted.copy(alpha = 0.25f),
+                start = Offset(left, zeroY),
+                end = Offset(left + contentW, zeroY),
+                strokeWidth = 1.dp.toPx(),
+            )
+            for (d in deriv) {
+                val cx = left + d.xMid.coerceIn(0f, 1f) * contentW
+                val frac = (d.deltaPerDay / scale).coerceIn(-1f, 1f)
+                val barTop: Float
+                val barH: Float
+                if (frac >= 0f) {
+                    barH = frac * posBand
+                    barTop = zeroY - barH
+                } else {
+                    barH = -frac * negBand
+                    barTop = zeroY
+                }
+                if (barH < 0.5f) continue // a zero-gain day: nothing to draw
+                drawRoundRect(
+                    color = if (d.deltaPerDay < 0f) DangerRed.copy(alpha = 0.6f)
+                    else ClaudeClay.copy(alpha = 0.6f),
+                    topLeft = Offset(cx - barW / 2f, barTop),
+                    size = Size(barW, barH),
+                    cornerRadius = CornerRadius(2.dp.toPx()),
+                )
+            }
+        }
+    }
+}
+
+/** A compact legend for the progress line under the main graph. */
 @Composable
 fun GraphLegend(
-    showDerivative: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -271,22 +333,6 @@ fun GraphLegend(
             style = MaterialTheme.typography.labelSmall,
             color = OnSurfaceMuted,
         )
-        if (showDerivative) {
-            Spacer(Modifier.width(16.dp))
-            Spacer(
-                Modifier
-                    .width(10.dp)
-                    .height(10.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(ClaudeClay.copy(alpha = 0.35f)),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "Gained / day",
-                style = MaterialTheme.typography.labelSmall,
-                color = OnSurfaceMuted,
-            )
-        }
     }
 }
 
@@ -324,13 +370,13 @@ private fun DrawScope.drawTooltip(
         color = Surface.copy(alpha = 0.95f),
         topLeft = Offset(boxLeft, boxTop),
         size = Size(boxW, boxH),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+        cornerRadius = CornerRadius(6.dp.toPx()),
     )
     drawRoundRect(
         color = ClaudeClay.copy(alpha = 0.6f),
         topLeft = Offset(boxLeft, boxTop),
         size = Size(boxW, boxH),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+        cornerRadius = CornerRadius(6.dp.toPx()),
         style = Stroke(width = 1.dp.toPx()),
     )
     drawIntoCanvas { canvas ->
@@ -346,14 +392,16 @@ private fun DrawScope.drawTooltip(
 /** Warm blurred bloom under the curve — the ProgressRing/LinearMeter LED recipe. */
 private fun DrawScope.drawGraphGlow(path: Path, strokePx: Float) {
     val androidPath = path.asAndroidPath()
-    // A perfectly flat curve — every sample at the same percent, most commonly a
-    // whole week sitting at 0% — has a zero-height bounding box. Blurring that
-    // degenerate path smears a broken band across the graph (and crashes the mask
-    // allocation on some devices), so skip the bloom and let the plain line show.
+    // A degenerate curve — every sample at the same percent (a flat week, most often
+    // 0%) or all bunched at one instant (a near-vertical spike at the very start of a
+    // week) — has a bounding box that's near-zero in one dimension. Blurring that
+    // concentrates all three layers into a bright blob / smear (and can fault the mask
+    // allocation), so skip the bloom below a small span and let the plain line show.
     val bounds = RectF()
     @Suppress("DEPRECATION") // single-arg overload isn't in the compileSdk 35 stubs
     androidPath.computeBounds(bounds, true)
-    if (bounds.height() < 1f || bounds.width() < 1f) return
+    val minSpanPx = 2.dp.toPx()
+    if (bounds.height() < minSpanPx || bounds.width() < minSpanPx) return
 
     drawIntoCanvas { canvas ->
         val paint = Paint().asFrameworkPaint().apply {
