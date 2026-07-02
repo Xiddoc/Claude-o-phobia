@@ -189,6 +189,50 @@ class GraphMathTest {
         assertTrue(d.all { it.xMid in 0f..1f && it.deltaPerDay.isFinite() })
     }
 
+    // --- progressRates / smoothRates --------------------------------------
+
+    @Test
+    fun progressRatesIsPerIntervalSlopeInPercentPerDay() {
+        // +30% over half a day -> +60%/day, anchored at the interval midpoint.
+        val samples = listOf(Sample(0, 10), Sample(43_200_000L, 40))
+        val r = GraphMath.progressRates(samples, W0, W1)
+        assertEquals(1, r.size)
+        assertEquals(60f, r[0].ratePerDay, 1e-3f)
+        assertEquals(21_600_000L, r[0].tsMs)                 // midpoint
+        assertTrue(r[0].x in 0f..1f)
+    }
+
+    @Test
+    fun progressRatesPreservesSignAndSkipsZeroWidthAndSparse() {
+        val drop = GraphMath.progressRates(listOf(Sample(0, 80), Sample(86_400_000L, 50)), W0, W1)
+        assertEquals(-30f, drop[0].ratePerDay, 1e-3f)        // a day-long 30% drop
+        // Coincident timestamps collapse (last wins) -> fewer than 2 distinct -> empty.
+        assertTrue(GraphMath.progressRates(listOf(Sample(5, 10), Sample(5, 90)), W0, W1).isEmpty())
+        assertTrue(GraphMath.progressRates(listOf(Sample(5, 10)), W0, W1).isEmpty())
+    }
+
+    @Test
+    fun smoothRatesShrinksSpikesButKeepsCountAndTimestamps() {
+        val n = 300
+        val raw = (0 until n).map {
+            GraphMath.RateSample(it.toLong(), it / (n - 1f), if (it % 2 == 0) 100f else -100f)
+        }
+        assertEquals(raw, GraphMath.smoothRates(raw, 0f))    // Straight = untouched
+        val sm = GraphMath.smoothRates(raw, 1f)
+        assertEquals(n, sm.size)
+        for (i in raw.indices) assertEquals(raw[i].tsMs, sm[i].tsMs) // ts preserved
+        val rawMax = raw.maxOf { kotlin.math.abs(it.ratePerDay) }
+        val smMax = sm.maxOf { kotlin.math.abs(it.ratePerDay) }
+        assertTrue("smoothed peak $smMax < raw peak $rawMax", smMax < rawMax)
+    }
+
+    @Test
+    fun rateScaleNeverZero() {
+        assertEquals(1f, GraphMath.rateScale(emptyList()), 1e-6f)
+        assertEquals(1f, GraphMath.rateScale(listOf(GraphMath.RateSample(0, 0f, 0.5f))), 1e-6f)
+        assertEquals(42f, GraphMath.rateScale(listOf(GraphMath.RateSample(0, 0f, -42f))), 1e-6f)
+    }
+
     // --- navigation -------------------------------------------------------
 
     private fun weeks(vararg starts: Long) =

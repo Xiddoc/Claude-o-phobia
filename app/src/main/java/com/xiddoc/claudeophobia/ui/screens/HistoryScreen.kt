@@ -217,13 +217,25 @@ private fun RangeView(
             tension = settings.graphCurveTension,
             glow = true,
             nowFraction = nowFraction,
+            zone = zone,
             modifier = Modifier.fillMaxWidth().height(220.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Tap the graph to read off any point.",
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurfaceMuted,
         )
         Spacer(Modifier.height(12.dp))
         GraphLegend()
         if (settings.showDerivative) {
             Spacer(Modifier.height(16.dp))
-            RangeGainGraph(weeks = weeks, modifier = Modifier.fillMaxWidth())
+            RangeGainGraph(
+                weeks = weeks,
+                tension = settings.derivativeCurveTension,
+                zone = zone,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         Spacer(Modifier.height(16.dp))
     }
@@ -344,7 +356,12 @@ private fun WeekPager(
             GraphLegend()
             if (settings.showDerivative && week.samples.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
-                WeeklyGainGraph(week = week, modifier = Modifier.fillMaxWidth())
+                WeeklyGainGraph(
+                    week = week,
+                    tension = settings.derivativeCurveTension,
+                    zone = zone,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }

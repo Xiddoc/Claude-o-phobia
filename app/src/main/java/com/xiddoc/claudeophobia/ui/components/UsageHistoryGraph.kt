@@ -30,6 +30,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asAndroidPath
@@ -39,16 +40,15 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xiddoc.claudeophobia.data.GraphMath
-import com.xiddoc.claudeophobia.data.SamplePoint
+import com.xiddoc.claudeophobia.data.Sample
+import com.xiddoc.claudeophobia.data.Vec2
 import com.xiddoc.claudeophobia.data.WeekBucket
 import com.xiddoc.claudeophobia.ui.theme.ClaudeClay
 import com.xiddoc.claudeophobia.ui.theme.ClaudeClayBright
 import com.xiddoc.claudeophobia.ui.theme.ClaudeGlow
-import com.xiddoc.claudeophobia.ui.theme.DangerRed
 import com.xiddoc.claudeophobia.ui.theme.OnBackground
 import com.xiddoc.claudeophobia.ui.theme.OnSurfaceMuted
 import com.xiddoc.claudeophobia.ui.theme.Surface
@@ -57,27 +57,45 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
-/** The horizontal gridlines drawn behind the curve, as unit-square y values (0%..100%). */
+/** The horizontal gridlines drawn behind the progress curve, as unit-square y values (0%..100%). */
 private val GRID_LEVELS = listOf(0.25f, 0.5f, 0.75f, 1f)
 
 private val TOOLTIP_FMT = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault())
 
+/** One stroked polyline in a [LineGraphCanvas]: raw unit-square points, curved and drawn. */
+private data class GraphSeries(
+    val points: List<Vec2>,
+    val tension: Float,
+    /** When true the points are already noise-smoothed; skip the moving-average pass. */
+    val preSmoothed: Boolean = false,
+    val glow: Boolean = false,
+    val showDots: Boolean = false,
+    val gradient: Boolean = false,
+)
+
+/** A point the user can tap (nearest by x) to reveal [label] in a callout. */
+private data class InspectPoint(val pos: Vec2, val label: String)
+
+/** The built model for a line chart: its polylines, the inspectable points, and chrome. */
+private class LineModel(
+    val series: List<GraphSeries>,
+    val inspect: List<InspectPoint>,
+    val baseline: Float,
+    val dividers: List<Float>,
+)
+
 /**
- * The in-app weekly-progress graph: a slightly Bezier-curved progress line with
- * sample dots, faint percentage gridlines, and a "now" marker for the current
- * week. The "gained per day" derivative now lives in its own [WeeklyGainGraph]
- * below, rather than overlaying the curve. Shares the exact [GraphMath] geometry
- * with the home-screen widget's bitmap renderer, so the two can never disagree —
- * only the canvas differs.
+ * The in-app weekly-progress graph: a slightly Bezier-curved, noise-smoothed
+ * progress line with sample dots, faint percentage gridlines, and a "now" marker.
+ * The "gained per day" derivative lives in its own [WeeklyGainGraph] below. Shares
+ * the exact [GraphMath] geometry with the widget's bitmap renderer.
  *
- * The risky numeric work (0/1/2 points, NaN, gaps, overshoot) all lives in
- * [GraphMath]; this composable only maps the 0..1 unit square into pixels (y is
- * flipped) and strokes it. Empty / single-sample weeks are handled by the caller,
- * which shows explanatory copy instead of a bare canvas.
- *
- * When [interactive] is set, tapping near a recorded sample pins a callout showing
- * that point's date/time (in [zone]) and percent; tapping empty space dismisses it.
+ * When [interactive] is set, tapping anywhere at an x pins the *nearest* recorded
+ * sample (x-only, so an imprecise vertical tap still lands on the curve) and shows
+ * its date/time (in [zone]) and percent; tapping the same point again dismisses it.
  */
 @Composable
 fun UsageHistoryGraph(
@@ -89,39 +107,223 @@ fun UsageHistoryGraph(
     interactive: Boolean = false,
     zone: ZoneId = ZoneId.systemDefault(),
 ) {
-    // Sample-aligned points (raw Sample + unit-square position) power both the dots
-    // and tap hit-testing, so a selection can never drift from the drawn curve.
-    val samplePoints = remember(week) {
-        GraphMath.toSamplePoints(
+    val model = remember(week, tension, glow, zone) {
+        val sp = GraphMath.toSamplePoints(
             week?.samples.orEmpty(),
             week?.weekStartMs ?: 0L,
             week?.weekEndMs ?: 0L,
         )
+        LineModel(
+            series = listOf(
+                GraphSeries(sp.map { it.pos }, tension, glow = glow, showDots = true, gradient = true),
+            ),
+            inspect = sp.map { InspectPoint(it.pos, sampleLabel(it.sample, zone)) },
+            baseline = 0f,
+            dividers = emptyList(),
+        )
     }
-    // Reset any pinned callout when the week (i.e. the pager page) changes.
-    var selected by remember(week) { mutableStateOf<SamplePoint?>(null) }
+    LineGraphCanvas(
+        model = model,
+        percentGrid = true,
+        nowFraction = todayFraction,
+        interactive = interactive,
+        modifier = modifier,
+    )
+}
 
-    val tapModifier = if (interactive && samplePoints.isNotEmpty()) {
-        Modifier.pointerInput(samplePoints) {
+/**
+ * The continuous multi-week progress graph for the History range views: every week
+ * in [weeks] on one shared time axis, each stroked and smoothed within its own
+ * bounds (so a reset never rounds into a false ramp) with a faint divider at each
+ * boundary — the line simply drops ~100%→0% across it, the sawtooth to eyeball
+ * against the continuous gained/day chart. Inspectable exactly like the week view.
+ */
+@Composable
+fun RangeHistoryGraph(
+    weeks: List<WeekBucket>,
+    tension: Float,
+    glow: Boolean,
+    nowFraction: Float?,
+    zone: ZoneId,
+    modifier: Modifier = Modifier,
+) {
+    if (weeks.isEmpty()) return
+    val model = remember(weeks, tension, glow, zone) {
+        val gStart = weeks.first().weekStartMs
+        val gEnd = weeks.last().weekEndMs
+        val span = (gEnd - gStart).toDouble().coerceAtLeast(1.0)
+        val series = ArrayList<GraphSeries>(weeks.size)
+        val inspect = ArrayList<InspectPoint>()
+        val dividers = ArrayList<Float>()
+        for ((i, wk) in weeks.withIndex()) {
+            if (i > 0) dividers.add(((wk.weekStartMs - gStart) / span).toFloat())
+            val sp = GraphMath.toSamplePoints(wk.samples, gStart, gEnd)
+            // No raw dots across a multi-week span — they'd clutter; inspection is
+            // x-snap so there's nothing to aim at anyway.
+            series.add(GraphSeries(sp.map { it.pos }, tension, glow = glow, showDots = false, gradient = true))
+            for (p in sp) inspect.add(InspectPoint(p.pos, sampleLabel(p.sample, zone)))
+        }
+        LineModel(series, inspect, baseline = 0f, dividers = dividers)
+    }
+    LineGraphCanvas(
+        model = model,
+        percentGrid = true,
+        nowFraction = nowFraction,
+        interactive = true,
+        modifier = modifier,
+    )
+}
+
+/** Callout text for a progress sample: "Jul 3, 2:00 PM  ·  42%". */
+private fun sampleLabel(sample: Sample, zone: ZoneId): String =
+    "${TOOLTIP_FMT.format(Instant.ofEpochMilli(sample.tsMs).atZone(zone))}  ·  ${sample.pct}%"
+
+/**
+ * The single-week "gained per day" chart — now a fine-grained, inspectable *line*
+ * (progress rate at sample resolution) rather than a per-day bar chart. Its own
+ * [tension] smooths the inherently spiky inter-sample rate independently of the
+ * progress line.
+ */
+@Composable
+fun WeeklyGainGraph(
+    week: WeekBucket,
+    tension: Float,
+    zone: ZoneId,
+    modifier: Modifier = Modifier,
+    interactive: Boolean = true,
+) {
+    GainLineChart(listOf(week), tension, zone, interactive, modifier)
+}
+
+/**
+ * The continuous gained-per-day line across [weeks] — the point of the range views.
+ * Each week's fine-grained rate is smoothed within its own bounds and concatenated
+ * on the shared axis, so the derivative flows uninterrupted from one week into the
+ * next and its continuity is readable at a glance.
+ */
+@Composable
+fun RangeGainGraph(
+    weeks: List<WeekBucket>,
+    tension: Float,
+    zone: ZoneId,
+    modifier: Modifier = Modifier,
+) {
+    GainLineChart(weeks, tension, zone, interactive = true, modifier = modifier)
+}
+
+@Composable
+private fun GainLineChart(
+    weeks: List<WeekBucket>,
+    tension: Float,
+    zone: ZoneId,
+    interactive: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    if (weeks.isEmpty()) return
+    val model = remember(weeks, tension, zone) { buildRateModel(weeks, tension, zone) }
+    Column(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(
+                Modifier
+                    .size(width = 14.dp, height = 3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(ClaudeClay),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "Gained / day",
+                style = MaterialTheme.typography.labelSmall,
+                color = OnSurfaceMuted,
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        LineGraphCanvas(
+            model = model,
+            percentGrid = false,
+            nowFraction = null,
+            interactive = interactive,
+            modifier = Modifier.fillMaxWidth().height(120.dp),
+        )
+    }
+}
+
+/**
+ * Builds the gained/day line model: per-week fine-grained [GraphMath.progressRates],
+ * each smoothed on its own by [GraphMath.smoothRates] at [tension] (never across a
+ * reset), then all normalized against one shared [GraphMath.rateScale] so the y
+ * scale is stable across the range. The zero-rate baseline drops to the floor when
+ * nothing ever fell, else lifts to leave room for the negative excursions.
+ */
+private fun buildRateModel(weeks: List<WeekBucket>, tension: Float, zone: ZoneId): LineModel {
+    val gStart = weeks.first().weekStartMs
+    val gEnd = weeks.last().weekEndMs
+    val span = (gEnd - gStart).toDouble().coerceAtLeast(1.0)
+    val perWeek = ArrayList<List<GraphMath.RateSample>>(weeks.size)
+    val all = ArrayList<GraphMath.RateSample>()
+    val dividers = ArrayList<Float>()
+    for ((i, wk) in weeks.withIndex()) {
+        if (i > 0) dividers.add(((wk.weekStartMs - gStart) / span).toFloat())
+        val smoothed = GraphMath.smoothRates(GraphMath.progressRates(wk.samples, gStart, gEnd), tension)
+        perWeek.add(smoothed)
+        all.addAll(smoothed)
+    }
+    val scale = GraphMath.rateScale(all)
+    val hasNeg = all.any { it.ratePerDay < 0f }
+    val baseline = if (hasNeg) 0.32f else 0.06f
+    val posRange = 1f - baseline
+    val negRange = baseline
+    fun yOf(rate: Float): Float {
+        val u = if (rate >= 0f) baseline + (rate / scale) * posRange else baseline + (rate / scale) * negRange
+        return u.coerceIn(0f, 1f)
+    }
+    val series = perWeek.map { sm ->
+        GraphSeries(sm.map { Vec2(it.x, yOf(it.ratePerDay)) }, tension, preSmoothed = true, gradient = false)
+    }
+    val inspect = all.map { InspectPoint(Vec2(it.x, yOf(it.ratePerDay)), rateLabel(it, zone)) }
+    return LineModel(series, inspect, baseline, dividers)
+}
+
+/** Callout text for a rate point: "Jul 3, 2:00 PM  ·  +12%/day". */
+private fun rateLabel(rate: GraphMath.RateSample, zone: ZoneId): String {
+    val r = rate.ratePerDay.roundToInt()
+    val signed = if (r >= 0) "+$r" else "$r"
+    return "${TOOLTIP_FMT.format(Instant.ofEpochMilli(rate.tsMs).atZone(zone))}  ·  $signed%/day"
+}
+
+/**
+ * The shared canvas behind every line chart in this file. Strokes each series
+ * (noise-smoothed unless pre-smoothed), draws either the percentage gridlines
+ * (progress) or a single zero-rate baseline (derivative), the week dividers, the
+ * "now" marker, and — when [interactive] — the tap-to-inspect crosshair, highlight
+ * and callout. Selection is x-nearest, so a vertically-imprecise tap still lands on
+ * the line; tapping the same point again clears it.
+ */
+@Composable
+private fun LineGraphCanvas(
+    model: LineModel,
+    percentGrid: Boolean,
+    nowFraction: Float?,
+    interactive: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    var selected by remember(model) { mutableStateOf<Int?>(null) }
+    val inspect = model.inspect
+
+    val tapModifier = if (interactive && inspect.isNotEmpty()) {
+        Modifier.pointerInput(model) {
             detectTapGestures { tap ->
                 val padX = size.width * 0.02f
-                val padY = size.height * 0.08f
                 val contentW = (size.width - 2 * padX).coerceAtLeast(1f)
-                val contentH = (size.height - 2 * padY).coerceAtLeast(1f)
-                fun sx(x: Float) = padX + x.coerceIn(0f, 1f) * contentW
-                fun sy(y: Float) = padY + (1f - y.coerceIn(0f, 1f)) * contentH
-                val nearest = samplePoints.minByOrNull { sp ->
-                    val dx = tap.x - sx(sp.pos.x)
-                    val dy = tap.y - sy(sp.pos.y)
-                    dx * dx + dy * dy
+                var best = 0
+                var bestD = Float.MAX_VALUE
+                for (i in inspect.indices) {
+                    val d = abs(tap.x - (padX + inspect[i].pos.x.coerceIn(0f, 1f) * contentW))
+                    if (d < bestD) {
+                        bestD = d
+                        best = i
+                    }
                 }
-                // Only pin when the tap lands reasonably close; otherwise dismiss.
-                val hitRadiusPx = 40.dp.toPx()
-                selected = nearest?.takeIf { sp ->
-                    val dx = tap.x - sx(sp.pos.x)
-                    val dy = tap.y - sy(sp.pos.y)
-                    dx * dx + dy * dy <= hitRadiusPx * hitRadiusPx
-                }
+                selected = if (selected == best) null else best
             }
         }
     } else {
@@ -138,331 +340,77 @@ fun UsageHistoryGraph(
         fun px(x: Float) = left + x.coerceIn(0f, 1f) * contentW
         fun py(y: Float) = top + (1f - y.coerceIn(0f, 1f)) * contentH
 
-        // Baseline track along 0%.
-        drawLine(
-            color = TrackColor,
-            start = Offset(left, py(0f)),
-            end = Offset(left + contentW, py(0f)),
-            strokeWidth = 2.dp.toPx(),
-        )
-
-        // Faint percentage gridlines (25/50/75/100%) so it's easy to read off where
-        // any point on the curve sits, with a small label at the left of each.
-        val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = OnSurfaceMuted.copy(alpha = 0.6f).toArgb()
-            textSize = 9.sp.toPx()
-        }
-        for (level in GRID_LEVELS) {
-            val y = py(level)
-            drawLine(
-                color = OnSurfaceMuted.copy(alpha = 0.12f),
-                start = Offset(left, y),
-                end = Offset(left + contentW, y),
-                strokeWidth = 1.dp.toPx(),
-            )
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.drawText(
-                    "${(level * 100).toInt()}%",
-                    left + 2.dp.toPx(),
-                    y - 2.dp.toPx(),
-                    labelPaint,
-                )
+        // Reference chrome: percentage gridlines for progress, a single faint zero
+        // line for the derivative band.
+        if (percentGrid) {
+            drawLine(TrackColor, Offset(left, py(0f)), Offset(left + contentW, py(0f)), strokeWidth = 2.dp.toPx())
+            val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = OnSurfaceMuted.copy(alpha = 0.6f).toArgb()
+                textSize = 9.sp.toPx()
             }
-        }
-
-        val samples = week?.samples.orEmpty()
-        val start = week?.weekStartMs ?: 0L
-        val end = week?.weekEndMs ?: 0L
-        val points = GraphMath.toPoints(samples, start, end)
-
-        // The progress curve — noise-smoothed (moving average) before the Bezier pass,
-        // while the sample dots below stay on the raw points.
-        val segs = GraphMath.smoothPath(GraphMath.smoothedPoints(points, tension), tension)
-        if (segs.isNotEmpty()) {
-            val path = Path().apply {
-                moveTo(px(segs.first().p0.x), py(segs.first().p0.y))
-                for (s in segs) cubicTo(px(s.c1.x), py(s.c1.y), px(s.c2.x), py(s.c2.y), px(s.p3.x), py(s.p3.y))
-            }
-            val strokePx = 2.5.dp.toPx()
-            if (glow) drawGraphGlow(path, strokePx)
-            drawPath(
-                path = path,
-                brush = Brush.horizontalGradient(listOf(ClaudeClay, ClaudeClayBright)),
-                style = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round),
-            )
-        }
-
-        // Sample dots, thinned so a fine sampling cadence stays legible.
-        for (p in GraphMath.thinForDots(points)) {
-            drawCircle(color = ClaudeClayBright, radius = 3.dp.toPx(), center = Offset(px(p.x), py(p.y)))
-        }
-
-        // "Now" marker for the current week.
-        if (todayFraction != null) {
-            val x = px(todayFraction.coerceIn(0f, 1f))
-            drawLine(
-                color = ClaudeClay.copy(alpha = 0.5f),
-                start = Offset(x, top),
-                end = Offset(x, top + contentH),
-                strokeWidth = 1.dp.toPx(),
-            )
-        }
-
-        // Pinned selection: highlight the point and float its date/time + percent.
-        selected?.let { sp ->
-            val cx = px(sp.pos.x)
-            val cy = py(sp.pos.y)
-            drawCircle(color = ClaudeGlow, radius = 5.dp.toPx(), center = Offset(cx, cy))
-            drawCircle(
-                color = ClaudeClay,
-                radius = 8.dp.toPx(),
-                center = Offset(cx, cy),
-                style = Stroke(width = 2.dp.toPx()),
-            )
-            val label = "${TOOLTIP_FMT.format(Instant.ofEpochMilli(sp.sample.tsMs).atZone(zone))}  ·  ${sp.sample.pct}%"
-            drawTooltip(label, cx, cy, left, left + contentW, top)
-        }
-    }
-}
-
-/**
- * The "gained per day" companion chart, shown directly under [UsageHistoryGraph]
- * when the derivative is enabled. Each bar is a calendar day's progress delta,
- * grown from a baseline (up for gains in clay, down for the rare drop in red), so
- * it's easy to read *how fast* progress was earned without it fighting the curve
- * for space. Auto-scales to the week's biggest move via [GraphMath.derivativeScale].
- *
- * A header row labels it and doubles as the legend, so the main graph no longer
- * has to. Empty / degenerate weeks draw nothing but the frame.
- */
-@Composable
-fun WeeklyGainGraph(
-    week: WeekBucket?,
-    modifier: Modifier = Modifier,
-) {
-    val deriv = remember(week) {
-        GraphMath.dailyDerivative(
-            week?.samples.orEmpty(),
-            week?.weekStartMs ?: 0L,
-            week?.weekEndMs ?: 0L,
-        )
-    }
-    GainChart(deriv = deriv, modifier = modifier)
-}
-
-/** The gained-per-day chart body: a labelled header plus a baseline bar chart of [deriv]. */
-@Composable
-private fun GainChart(
-    deriv: List<com.xiddoc.claudeophobia.data.DerivativePoint>,
-    modifier: Modifier = Modifier,
-    dividers: List<Float> = emptyList(),
-    height: Dp = 72.dp,
-) {
-    Column(modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Spacer(
-                Modifier
-                    .width(10.dp)
-                    .height(10.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(ClaudeClay.copy(alpha = 0.55f)),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "Gained / day",
-                style = MaterialTheme.typography.labelSmall,
-                color = OnSurfaceMuted,
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(height),
-        ) {
-            val padX = size.width * 0.02f
-            val padY = size.height * 0.12f
-            val left = padX
-            val top = padY
-            val contentW = (size.width - 2 * padX).coerceAtLeast(1f)
-            val contentH = (size.height - 2 * padY).coerceAtLeast(1f)
-
-            // Faint week-boundary dividers (only meaningful in a multi-week range).
-            for (frac in dividers) {
-                val x = left + frac.coerceIn(0f, 1f) * contentW
-                drawLine(
-                    color = OnSurfaceMuted.copy(alpha = 0.12f),
-                    start = Offset(x, top),
-                    end = Offset(x, top + contentH),
-                    strokeWidth = 1.dp.toPx(),
-                )
-            }
-
-            if (deriv.isEmpty()) return@Canvas
-            val scale = GraphMath.derivativeScale(deriv)
-
-            // Keep the zero line at the bottom when nothing ever dropped (the common
-            // case: progress only climbs), so bars grow up from the floor. Lift it to
-            // leave room below only when a genuine drop needs to be shown.
-            val hasNeg = deriv.any { it.deltaPerDay < 0f }
-            val zeroY = if (hasNeg) top + contentH * 0.72f else top + contentH
-            val posBand = zeroY - top
-            val negBand = (top + contentH) - zeroY
-            val barW = (contentW / deriv.size * 0.7f).coerceIn(1f, contentW * 0.1f)
-
-            drawLine(
-                color = OnSurfaceMuted.copy(alpha = 0.25f),
-                start = Offset(left, zeroY),
-                end = Offset(left + contentW, zeroY),
-                strokeWidth = 1.dp.toPx(),
-            )
-            for (d in deriv) {
-                val cx = left + d.xMid.coerceIn(0f, 1f) * contentW
-                val frac = (d.deltaPerDay / scale).coerceIn(-1f, 1f)
-                val barTop: Float
-                val barH: Float
-                if (frac >= 0f) {
-                    barH = frac * posBand
-                    barTop = zeroY - barH
-                } else {
-                    barH = -frac * negBand
-                    barTop = zeroY
+            for (level in GRID_LEVELS) {
+                val y = py(level)
+                drawLine(OnSurfaceMuted.copy(alpha = 0.12f), Offset(left, y), Offset(left + contentW, y), strokeWidth = 1.dp.toPx())
+                drawIntoCanvas { c ->
+                    c.nativeCanvas.drawText("${(level * 100).toInt()}%", left + 2.dp.toPx(), y - 2.dp.toPx(), labelPaint)
                 }
-                if (barH < 0.5f) continue // a zero-gain day: nothing to draw
-                drawRoundRect(
-                    color = if (d.deltaPerDay < 0f) DangerRed.copy(alpha = 0.6f)
-                    else ClaudeClay.copy(alpha = 0.6f),
-                    topLeft = Offset(cx - barW / 2f, barTop),
-                    size = Size(barW, barH),
-                    cornerRadius = CornerRadius(2.dp.toPx()),
-                )
             }
-        }
-    }
-}
-
-/**
- * The continuous multi-week progress graph for the History range views. Draws every
- * week in [weeks] on one shared time axis: each week's curve is stroked separately
- * (and noise-smoothed within its own bounds) so the Catmull-Rom pass never rounds a
- * reset into a false ramp, and a faint divider marks each week boundary — the line
- * simply drops from ~100% back to 0% across it, which is exactly the sawtooth the
- * user wants to eyeball against the continuous gained/day chart below.
- *
- * [nowFraction] (0..1 across the whole range) draws the "now" marker when the last
- * week is the current one. Non-interactive by design — this is a trend overview;
- * the single-week view keeps the tap-to-inspect callout.
- */
-@Composable
-fun RangeHistoryGraph(
-    weeks: List<WeekBucket>,
-    tension: Float,
-    glow: Boolean,
-    nowFraction: Float?,
-    modifier: Modifier = Modifier,
-) {
-    if (weeks.isEmpty()) return
-    val globalStart = weeks.first().weekStartMs
-    val globalEnd = weeks.last().weekEndMs
-
-    Canvas(modifier = modifier.fillMaxWidth()) {
-        val padX = size.width * 0.02f
-        val padY = size.height * 0.08f
-        val left = padX
-        val top = padY
-        val contentW = (size.width - 2 * padX).coerceAtLeast(1f)
-        val contentH = (size.height - 2 * padY).coerceAtLeast(1f)
-        val span = (globalEnd - globalStart).toDouble().coerceAtLeast(1.0)
-        fun gx(tsMs: Long) = left + ((tsMs - globalStart).toDouble() / span).coerceIn(0.0, 1.0).toFloat() * contentW
-        fun px(x: Float) = left + x.coerceIn(0f, 1f) * contentW
-        fun py(y: Float) = top + (1f - y.coerceIn(0f, 1f)) * contentH
-
-        // Baseline + percentage gridlines, matching the single-week graph.
-        drawLine(TrackColor, Offset(left, py(0f)), Offset(left + contentW, py(0f)), strokeWidth = 2.dp.toPx())
-        val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = OnSurfaceMuted.copy(alpha = 0.6f).toArgb()
-            textSize = 9.sp.toPx()
-        }
-        for (level in GRID_LEVELS) {
-            val y = py(level)
-            drawLine(OnSurfaceMuted.copy(alpha = 0.12f), Offset(left, y), Offset(left + contentW, y), strokeWidth = 1.dp.toPx())
-            drawIntoCanvas { c ->
-                c.nativeCanvas.drawText("${(level * 100).toInt()}%", left + 2.dp.toPx(), y - 2.dp.toPx(), labelPaint)
-            }
+        } else {
+            drawLine(
+                color = OnSurfaceMuted.copy(alpha = 0.3f),
+                start = Offset(left, py(model.baseline)),
+                end = Offset(left + contentW, py(model.baseline)),
+                strokeWidth = 1.dp.toPx(),
+            )
         }
 
-        // Each week: its own smoothed curve + dots, mapped onto the global time axis.
-        for ((i, week) in weeks.withIndex()) {
-            if (i > 0) {
-                val bx = gx(week.weekStartMs)
-                drawLine(
-                    color = OnSurfaceMuted.copy(alpha = 0.18f),
-                    start = Offset(bx, top),
-                    end = Offset(bx, top + contentH),
-                    strokeWidth = 1.dp.toPx(),
-                )
-            }
-            // Positions in the *global* unit square (span = whole range).
-            val pts = GraphMath.toPoints(week.samples, globalStart, globalEnd)
-            val segs = GraphMath.smoothPath(GraphMath.smoothedPoints(pts, tension), tension)
+        // Week-boundary dividers (multi-week ranges only).
+        for (frac in model.dividers) {
+            val x = px(frac)
+            drawLine(OnSurfaceMuted.copy(alpha = 0.18f), Offset(x, top), Offset(x, top + contentH), strokeWidth = 1.dp.toPx())
+        }
+
+        // The series.
+        for (s in model.series) {
+            val pts = if (s.preSmoothed) s.points else GraphMath.smoothedPoints(s.points, s.tension)
+            val segs = GraphMath.smoothPath(pts, s.tension)
             if (segs.isNotEmpty()) {
                 val path = Path().apply {
                     moveTo(px(segs.first().p0.x), py(segs.first().p0.y))
-                    for (s in segs) cubicTo(px(s.c1.x), py(s.c1.y), px(s.c2.x), py(s.c2.y), px(s.p3.x), py(s.p3.y))
+                    for (seg in segs) cubicTo(px(seg.c1.x), py(seg.c1.y), px(seg.c2.x), py(seg.c2.y), px(seg.p3.x), py(seg.p3.y))
                 }
-                val strokePx = 2.dp.toPx()
-                if (glow) drawGraphGlow(path, strokePx)
+                val strokePx = 2.5.dp.toPx()
+                if (s.glow) drawGraphGlow(path, strokePx)
                 drawPath(
                     path = path,
-                    brush = Brush.horizontalGradient(listOf(ClaudeClay, ClaudeClayBright)),
+                    brush = if (s.gradient) Brush.horizontalGradient(listOf(ClaudeClay, ClaudeClayBright)) else SolidColor(ClaudeClay),
                     style = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round),
                 )
             }
-            for (p in GraphMath.thinForDots(pts)) {
-                drawCircle(ClaudeClayBright, radius = 2.dp.toPx(), center = Offset(px(p.x), py(p.y)))
+            if (s.showDots) {
+                for (p in GraphMath.thinForDots(s.points)) {
+                    drawCircle(ClaudeClayBright, radius = 3.dp.toPx(), center = Offset(px(p.x), py(p.y)))
+                }
             }
         }
 
+        // "Now" marker.
         if (nowFraction != null) {
             val x = px(nowFraction.coerceIn(0f, 1f))
             drawLine(ClaudeClay.copy(alpha = 0.5f), Offset(x, top), Offset(x, top + contentH), strokeWidth = 1.dp.toPx())
         }
-    }
-}
 
-/**
- * The continuous gained-per-day chart across [weeks] — the whole point of the range
- * views. Each week's [GraphMath.dailyDerivative] is remapped from its own 0..1 onto
- * the shared range axis and concatenated, so the daily bars flow uninterrupted from
- * one week into the next and the derivative's continuity is readable at a glance.
- */
-@Composable
-fun RangeGainGraph(
-    weeks: List<WeekBucket>,
-    modifier: Modifier = Modifier,
-) {
-    val model = remember(weeks) {
-        if (weeks.isEmpty()) {
-            emptyList<com.xiddoc.claudeophobia.data.DerivativePoint>() to emptyList<Float>()
-        } else {
-            val globalStart = weeks.first().weekStartMs
-            val globalEnd = weeks.last().weekEndMs
-            val span = (globalEnd - globalStart).toDouble().coerceAtLeast(1.0)
-            val combined = ArrayList<com.xiddoc.claudeophobia.data.DerivativePoint>()
-            val dividers = ArrayList<Float>()
-            for ((i, week) in weeks.withIndex()) {
-                if (i > 0) dividers.add(((week.weekStartMs - globalStart).toDouble() / span).toFloat())
-                val weekSpan = (week.weekEndMs - week.weekStartMs).toDouble()
-                for (d in GraphMath.dailyDerivative(week.samples, week.weekStartMs, week.weekEndMs)) {
-                    val tsMid = week.weekStartMs + (d.xMid.toDouble() * weekSpan).toLong()
-                    val gx = ((tsMid - globalStart).toDouble() / span).coerceIn(0.0, 1.0).toFloat()
-                    combined.add(com.xiddoc.claudeophobia.data.DerivativePoint(gx, d.deltaPerDay))
-                }
-            }
-            combined to dividers
+        // Tap-to-inspect: crosshair at the x, a highlight on the point, and its callout.
+        selected?.let { idx ->
+            val ip = inspect.getOrNull(idx) ?: return@let
+            val cx = px(ip.pos.x)
+            val cy = py(ip.pos.y)
+            drawLine(OnSurfaceMuted.copy(alpha = 0.4f), Offset(cx, top), Offset(cx, top + contentH), strokeWidth = 1.dp.toPx())
+            drawCircle(color = ClaudeGlow, radius = 5.dp.toPx(), center = Offset(cx, cy))
+            drawCircle(color = ClaudeClay, radius = 8.dp.toPx(), center = Offset(cx, cy), style = Stroke(width = 2.dp.toPx()))
+            drawTooltip(ip.label, cx, cy, left, left + contentW, top)
         }
     }
-    GainChart(deriv = model.first, modifier = modifier, dividers = model.second, height = 84.dp)
 }
 
 /** A compact legend for the progress line under the main graph. */

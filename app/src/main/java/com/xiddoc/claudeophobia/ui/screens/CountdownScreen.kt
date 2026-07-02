@@ -208,7 +208,13 @@ fun CountdownScreen(
                     GraphLegend()
                     if (settings.showDerivative) {
                         Spacer(Modifier.height(16.dp))
-                        WeeklyGainGraph(week = currentWeek, modifier = Modifier.fillMaxWidth())
+                        WeeklyGainGraph(
+                            week = currentWeek,
+                            tension = settings.derivativeCurveTension,
+                            zone = settings.resetConfig.zone,
+                            interactive = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }

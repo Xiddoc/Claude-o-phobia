@@ -282,10 +282,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Toggles the derivative overlay and re-renders the graph widget. */
+    /** Toggles the derivative chart and re-renders the graph widget. */
     fun setShowDerivative(enabled: Boolean) {
         viewModelScope.launch {
             repository.setShowDerivative(enabled)
+            HistoryGraphWidget.refresh(getApplication())
+        }
+    }
+
+    /** Sets the gained/day chart's own smoothing and re-renders the graph widget. */
+    fun setDerivativeCurveTension(tension: Float) {
+        viewModelScope.launch {
+            repository.setDerivativeCurveTension(tension)
             HistoryGraphWidget.refresh(getApplication())
         }
     }

@@ -205,6 +205,78 @@ object GraphMath {
         return if (maxAbs.isFinite() && maxAbs > 1f) maxAbs else 1f
     }
 
+    /**
+     * One point of the fine-grained progress-rate series: the instantaneous "% per
+     * day" gain over one inter-sample interval, anchored at that interval's midpoint
+     * [tsMs] and its unit-square [x] across the span it was computed in.
+     */
+    data class RateSample(val tsMs: Long, val x: Float, val ratePerDay: Float)
+
+    /**
+     * The progress derivative at *sample* resolution rather than one bucket per day:
+     * for each pair of consecutive (distinct-timestamp) samples, the slope
+     * `(Δpercent / Δdays)` in %/day, placed at the interval midpoint and mapped to
+     * unit-x across `[spanStartMs, spanEndMs]`. Intervals of zero/negative duration
+     * are skipped so it never divides by zero, and non-finite results are dropped.
+     *
+     * Raw inter-sample slopes are spiky by nature (a 5% jump in 15 minutes reads as a
+     * huge daily rate), which is exactly why the chart offers its own [smoothRates]
+     * pass — callers smooth per contiguous series (one week) before normalizing.
+     */
+    fun progressRates(samples: List<Sample>, spanStartMs: Long, spanEndMs: Long): List<RateSample> {
+        if (spanEndMs <= spanStartMs) return emptyList()
+        val span = (spanEndMs - spanStartMs).toDouble()
+        val collapsed = LinkedHashMap<Long, Int>()
+        for (s in samples.sortedBy { it.tsMs }) collapsed[s.tsMs] = s.pct.coerceIn(0, 100)
+        val entries = collapsed.entries.toList()
+        if (entries.size < 2) return emptyList()
+        val out = ArrayList<RateSample>(entries.size - 1)
+        for (i in 1 until entries.size) {
+            val t0 = entries[i - 1].key
+            val p0 = entries[i - 1].value
+            val t1 = entries[i].key
+            val p1 = entries[i].value
+            val dtDays = (t1 - t0).toDouble() / DAY_MS
+            if (dtDays <= 0.0) continue
+            val rate = ((p1 - p0) / dtDays).toFloat()
+            val tsMid = t0 + (t1 - t0) / 2
+            val x = ((tsMid - spanStartMs).toDouble() / span).coerceIn(0.0, 1.0).toFloat()
+            if (rate.isFinite() && x.isFinite()) out.add(RateSample(tsMid, x, rate))
+        }
+        return out
+    }
+
+    /**
+     * A centered moving average over a rate series' [RateSample.ratePerDay] (ts/x
+     * preserved), the [progressRates] analogue of [smoothedPoints] and the knob
+     * behind the gained/day chart's own smoothing preset. Same window rule
+     * ([SMOOTH_MAX_FRACTION] × count × tension); returns the input untouched for
+     * tension 0, fewer than 3 points, or a sub-1 window. Smooth one contiguous
+     * series (a single week) at a time — never across a reset.
+     */
+    fun smoothRates(rates: List<RateSample>, tension: Float): List<RateSample> {
+        val n = rates.size
+        val t = tension.coerceIn(0f, 1f)
+        if (n < 3 || t <= 0f) return rates
+        val half = (t * SMOOTH_MAX_FRACTION * n).toInt()
+        if (half < 1) return rates
+        val out = ArrayList<RateSample>(n)
+        for (i in 0 until n) {
+            val lo = (i - half).coerceAtLeast(0)
+            val hi = (i + half).coerceAtMost(n - 1)
+            var sum = 0f
+            for (j in lo..hi) sum += rates[j].ratePerDay
+            out.add(rates[i].copy(ratePerDay = sum / (hi - lo + 1)))
+        }
+        return out
+    }
+
+    /** The magnitude mapping a rate series to full band height; at least 1f (never divides by zero). */
+    fun rateScale(rates: List<RateSample>): Float {
+        val maxAbs = rates.maxOfOrNull { abs(it.ratePerDay) } ?: 0f
+        return if (maxAbs.isFinite() && maxAbs > 1f) maxAbs else 1f
+    }
+
     // --- Week navigation, shared by the widget (absolute pointer) and the in-app
     //     pager. All operate on a list already sorted ascending by weekStartMs and
     //     can never return a week outside the data (no future, no pre-earliest). ---
