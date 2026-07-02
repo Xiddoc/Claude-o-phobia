@@ -83,8 +83,15 @@ data class AppSettings(
      * higher = curvier. Defaults to a slight Bezier curve.
      */
     val graphCurveTension: Float = GraphMath.TENSION_SLIGHT,
-    /** Whether the "gained per day" derivative overlay is drawn on the graph. */
+    /** Whether the "gained per day" derivative chart is drawn under the graph. */
     val showDerivative: Boolean = true,
+    /**
+     * Smoothing for the gained/day (derivative) chart, its own knob because the
+     * fine-grained inter-sample rate is far spikier than the progress line and
+     * usually wants a heavier hand. Fed to [GraphMath.smoothRates]. Defaults to the
+     * smoothest preset.
+     */
+    val derivativeCurveTension: Float = GraphMath.TENSION_SMOOTH,
     /**
      * Whether the graph widget's bitmap gets the warm LED bloom. Off by default:
      * the blur is the heaviest part of a bitmap render and the graph's fill is
@@ -149,6 +156,7 @@ class SettingsRepository(private val context: Context) {
             historySamplingEnabled = prefs[KEY_HISTORY_SAMPLING] ?: true,
             graphCurveTension = prefs[KEY_GRAPH_TENSION] ?: GraphMath.TENSION_SLIGHT,
             showDerivative = prefs[KEY_SHOW_DERIVATIVE] ?: true,
+            derivativeCurveTension = prefs[KEY_DERIV_TENSION] ?: GraphMath.TENSION_SMOOTH,
             graphWidgetGlow = prefs[KEY_GRAPH_GLOW] ?: false,
             circleWidgetGlow = prefs[KEY_CIRCLE_GLOW] ?: true,
         )
@@ -231,9 +239,14 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[KEY_GRAPH_TENSION] = tension.coerceIn(0f, 1f) }
     }
 
-    /** Toggles the "gained per day" derivative overlay on the graph. */
+    /** Toggles the "gained per day" derivative chart under the graph. */
     suspend fun setShowDerivative(enabled: Boolean) {
         context.dataStore.edit { it[KEY_SHOW_DERIVATIVE] = enabled }
+    }
+
+    /** Sets the gained/day chart's own curve smoothing (clamped to a sane 0..1). */
+    suspend fun setDerivativeCurveTension(tension: Float) {
+        context.dataStore.edit { it[KEY_DERIV_TENSION] = tension.coerceIn(0f, 1f) }
     }
 
     /** Toggles the warm glow on the graph widget bitmap. */
@@ -266,6 +279,7 @@ class SettingsRepository(private val context: Context) {
         private val KEY_HISTORY_SAMPLING = booleanPreferencesKey("history_sampling_enabled")
         private val KEY_GRAPH_TENSION = floatPreferencesKey("graph_curve_tension")
         private val KEY_SHOW_DERIVATIVE = booleanPreferencesKey("graph_show_derivative")
+        private val KEY_DERIV_TENSION = floatPreferencesKey("derivative_curve_tension")
         private val KEY_GRAPH_GLOW = booleanPreferencesKey("graph_widget_glow")
         private val KEY_CIRCLE_GLOW = booleanPreferencesKey("circle_widget_glow")
     }

@@ -39,6 +39,71 @@ class GraphMathTest {
         assertEquals(0.8f, pts[0].y, 1e-6f)
     }
 
+    // --- toSamplePoints ---------------------------------------------------
+
+    @Test
+    fun toSamplePointsPairsEachPositionWithItsRawSample() {
+        val a = Sample(W1 / 4, 25)
+        val b = Sample(W1 / 2, 60)
+        val sp = GraphMath.toSamplePoints(listOf(b, a), W0, W1) // out of order on purpose
+        assertEquals(2, sp.size)
+        // Sorted ascending by timestamp, positions match toPoints, sample carried through.
+        assertEquals(a, sp[0].sample)
+        assertEquals(0.25f, sp[0].pos.x, 1e-3f)
+        assertEquals(0.25f, sp[0].pos.y, 1e-6f)
+        assertEquals(b, sp[1].sample)
+        assertEquals(0.60f, sp[1].pos.y, 1e-6f)
+        // Positions stay in lockstep with toPoints so a tap can't drift off the curve.
+        assertEquals(GraphMath.toPoints(listOf(a, b), W0, W1), sp.map { it.pos })
+    }
+
+    @Test
+    fun toSamplePointsEmptyForDegenerateWeek() {
+        assertTrue(GraphMath.toSamplePoints(listOf(Sample(0, 10)), 100, 100).isEmpty())
+        assertTrue(GraphMath.toSamplePoints(emptyList(), W0, W1).isEmpty())
+    }
+
+    // --- smoothedPoints ---------------------------------------------------
+
+    @Test
+    fun smoothedPointsLeavesShortOrStraightSeriesUntouched() {
+        val pts = (0..10).map { Vec2(it / 10f, if (it % 2 == 0) 1f else 0f) }
+        // Tension 0 (Straight) never averages.
+        assertEquals(pts, GraphMath.smoothedPoints(pts, 0f))
+        // Fewer than 3 points is returned as-is regardless of tension.
+        val two = listOf(Vec2(0f, 0f), Vec2(1f, 1f))
+        assertEquals(two, GraphMath.smoothedPoints(two, 1f))
+    }
+
+    @Test
+    fun smoothedPointsKeepsXAndReducesZigZagVariance() {
+        // A saw-tooth 0/1/0/1… of enough points that the window is >= 1.
+        val n = 400
+        val pts = (0 until n).map { Vec2(it / (n - 1f), if (it % 2 == 0) 1f else 0f) }
+        val sm = GraphMath.smoothedPoints(pts, 1f)
+        assertEquals(n, sm.size)
+        // x is preserved exactly; y is pulled toward the 0.5 mean (variance shrinks).
+        for (i in pts.indices) assertEquals(pts[i].x, sm[i].x, 1e-6f)
+        fun variance(v: List<Vec2>): Float {
+            val mean = v.map { it.y }.average().toFloat()
+            return v.map { (it.y - mean) * (it.y - mean) }.average().toFloat()
+        }
+        assertTrue("smoothed variance ${variance(sm)} < raw ${variance(pts)}", variance(sm) < variance(pts))
+        // Interior points stay finite and within the data's [0,1] envelope.
+        assertTrue(sm.all { it.y in 0f..1f })
+    }
+
+    // --- weeksForRange ----------------------------------------------------
+
+    @Test
+    fun weeksForRangeTakesMostRecentOrAll() {
+        val w = weeks(100, 200, 300, 400)
+        assertEquals(listOf(300L, 400L), GraphMath.weeksForRange(w, 2).map { it.weekStartMs })
+        assertEquals(w, GraphMath.weeksForRange(w, 0))            // 0 = all
+        assertEquals(w, GraphMath.weeksForRange(w, 99))           // more than exist = all
+        assertTrue(GraphMath.weeksForRange(emptyList(), 4).isEmpty())
+    }
+
     // --- smoothPath -------------------------------------------------------
 
     @Test
@@ -122,6 +187,50 @@ class GraphMathTest {
         val d = GraphMath.dailyDerivative(samples, 0, end)
         assertTrue(d.isNotEmpty())
         assertTrue(d.all { it.xMid in 0f..1f && it.deltaPerDay.isFinite() })
+    }
+
+    // --- progressRates / smoothRates --------------------------------------
+
+    @Test
+    fun progressRatesIsPerIntervalSlopeInPercentPerDay() {
+        // +30% over half a day -> +60%/day, anchored at the interval midpoint.
+        val samples = listOf(Sample(0, 10), Sample(43_200_000L, 40))
+        val r = GraphMath.progressRates(samples, W0, W1)
+        assertEquals(1, r.size)
+        assertEquals(60f, r[0].ratePerDay, 1e-3f)
+        assertEquals(21_600_000L, r[0].tsMs)                 // midpoint
+        assertTrue(r[0].x in 0f..1f)
+    }
+
+    @Test
+    fun progressRatesPreservesSignAndSkipsZeroWidthAndSparse() {
+        val drop = GraphMath.progressRates(listOf(Sample(0, 80), Sample(86_400_000L, 50)), W0, W1)
+        assertEquals(-30f, drop[0].ratePerDay, 1e-3f)        // a day-long 30% drop
+        // Coincident timestamps collapse (last wins) -> fewer than 2 distinct -> empty.
+        assertTrue(GraphMath.progressRates(listOf(Sample(5, 10), Sample(5, 90)), W0, W1).isEmpty())
+        assertTrue(GraphMath.progressRates(listOf(Sample(5, 10)), W0, W1).isEmpty())
+    }
+
+    @Test
+    fun smoothRatesShrinksSpikesButKeepsCountAndTimestamps() {
+        val n = 300
+        val raw = (0 until n).map {
+            GraphMath.RateSample(it.toLong(), it / (n - 1f), if (it % 2 == 0) 100f else -100f)
+        }
+        assertEquals(raw, GraphMath.smoothRates(raw, 0f))    // Straight = untouched
+        val sm = GraphMath.smoothRates(raw, 1f)
+        assertEquals(n, sm.size)
+        for (i in raw.indices) assertEquals(raw[i].tsMs, sm[i].tsMs) // ts preserved
+        val rawMax = raw.maxOf { kotlin.math.abs(it.ratePerDay) }
+        val smMax = sm.maxOf { kotlin.math.abs(it.ratePerDay) }
+        assertTrue("smoothed peak $smMax < raw peak $rawMax", smMax < rawMax)
+    }
+
+    @Test
+    fun rateScaleNeverZero() {
+        assertEquals(1f, GraphMath.rateScale(emptyList()), 1e-6f)
+        assertEquals(1f, GraphMath.rateScale(listOf(GraphMath.RateSample(0, 0f, 0.5f))), 1e-6f)
+        assertEquals(42f, GraphMath.rateScale(listOf(GraphMath.RateSample(0, 0f, -42f))), 1e-6f)
     }
 
     // --- navigation -------------------------------------------------------

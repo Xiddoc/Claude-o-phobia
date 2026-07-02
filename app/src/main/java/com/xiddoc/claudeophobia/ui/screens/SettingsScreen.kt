@@ -280,7 +280,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(16.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Show gained-per-day overlay",
+                        text = "Show gained-per-day chart",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
@@ -293,11 +293,33 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "The overlay draws how much progress you gained each day (the " +
-                        "derivative) as faint bars beneath the curve.",
+                    text = "Adds a separate, inspectable line chart under the graph showing " +
+                        "how fast you're gaining progress (the derivative), at sample " +
+                        "resolution. Progress smoothing above also applies a moving " +
+                        "average so the curve tracks the trend rather than every wobble.",
                     style = MaterialTheme.typography.bodySmall,
                     color = OnSurfaceMuted,
                 )
+                if (settings.showDerivative) {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "Gained/day smoothing",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    CurveTensionPicker(
+                        selected = settings.derivativeCurveTension,
+                        onSelected = { viewModel.setDerivativeCurveTension(it) },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "The per-sample rate is spiky, so this usually wants a heavier " +
+                            "hand than the progress line.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceMuted,
+                    )
+                }
             }
 
             Spacer(Modifier.height(16.dp))
