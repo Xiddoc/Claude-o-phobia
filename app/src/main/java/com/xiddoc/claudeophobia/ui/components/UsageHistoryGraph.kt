@@ -251,8 +251,13 @@ private fun GainLineChart(
  * Builds the gained/day line model: per-week fine-grained [GraphMath.progressRates],
  * each smoothed on its own by [GraphMath.smoothRates] at [tension] (never across a
  * reset), then all normalized against one shared [GraphMath.rateScale] so the y
- * scale is stable across the range. The zero-rate baseline drops to the floor when
- * nothing ever fell, else lifts to leave room for the negative excursions.
+ * scale is stable across the range.
+ *
+ * Weekly progress is cumulative, so it can't genuinely fall *within* a week — a
+ * negative slope is only the reset carry-over (a pre-reset ~100% sample followed by
+ * the 0% reset), which otherwise reads as a −4000%/day spike at each boundary. We
+ * floor those to 0 *before* smoothing so the artifact can't bleed into its
+ * neighbours, leaving an honest, positive "how fast you gained" line from the floor.
  */
 private fun buildRateModel(weeks: List<WeekBucket>, tension: Float, zone: ZoneId): LineModel {
     val gStart = weeks.first().weekStartMs
@@ -263,19 +268,15 @@ private fun buildRateModel(weeks: List<WeekBucket>, tension: Float, zone: ZoneId
     val dividers = ArrayList<Float>()
     for ((i, wk) in weeks.withIndex()) {
         if (i > 0) dividers.add(((wk.weekStartMs - gStart) / span).toFloat())
-        val smoothed = GraphMath.smoothRates(GraphMath.progressRates(wk.samples, gStart, gEnd), tension)
+        val gains = GraphMath.progressRates(wk.samples, gStart, gEnd)
+            .map { if (it.ratePerDay < 0f) it.copy(ratePerDay = 0f) else it }
+        val smoothed = GraphMath.smoothRates(gains, tension)
         perWeek.add(smoothed)
         all.addAll(smoothed)
     }
     val scale = GraphMath.rateScale(all)
-    val hasNeg = all.any { it.ratePerDay < 0f }
-    val baseline = if (hasNeg) 0.32f else 0.06f
-    val posRange = 1f - baseline
-    val negRange = baseline
-    fun yOf(rate: Float): Float {
-        val u = if (rate >= 0f) baseline + (rate / scale) * posRange else baseline + (rate / scale) * negRange
-        return u.coerceIn(0f, 1f)
-    }
+    val baseline = 0.06f
+    fun yOf(rate: Float): Float = (baseline + (rate / scale) * (1f - baseline)).coerceIn(0f, 1f)
     val series = perWeek.map { sm ->
         GraphSeries(sm.map { Vec2(it.x, yOf(it.ratePerDay)) }, tension, preSmoothed = true, gradient = false)
     }
