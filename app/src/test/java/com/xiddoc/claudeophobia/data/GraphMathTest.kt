@@ -39,6 +39,30 @@ class GraphMathTest {
         assertEquals(0.8f, pts[0].y, 1e-6f)
     }
 
+    // --- toSamplePoints ---------------------------------------------------
+
+    @Test
+    fun toSamplePointsPairsEachPositionWithItsRawSample() {
+        val a = Sample(W1 / 4, 25)
+        val b = Sample(W1 / 2, 60)
+        val sp = GraphMath.toSamplePoints(listOf(b, a), W0, W1) // out of order on purpose
+        assertEquals(2, sp.size)
+        // Sorted ascending by timestamp, positions match toPoints, sample carried through.
+        assertEquals(a, sp[0].sample)
+        assertEquals(0.25f, sp[0].pos.x, 1e-3f)
+        assertEquals(0.25f, sp[0].pos.y, 1e-6f)
+        assertEquals(b, sp[1].sample)
+        assertEquals(0.60f, sp[1].pos.y, 1e-6f)
+        // Positions stay in lockstep with toPoints so a tap can't drift off the curve.
+        assertEquals(GraphMath.toPoints(listOf(a, b), W0, W1), sp.map { it.pos })
+    }
+
+    @Test
+    fun toSamplePointsEmptyForDegenerateWeek() {
+        assertTrue(GraphMath.toSamplePoints(listOf(Sample(0, 10)), 100, 100).isEmpty())
+        assertTrue(GraphMath.toSamplePoints(emptyList(), W0, W1).isEmpty())
+    }
+
     // --- smoothPath -------------------------------------------------------
 
     @Test

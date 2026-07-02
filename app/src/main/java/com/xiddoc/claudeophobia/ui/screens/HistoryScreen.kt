@@ -196,6 +196,8 @@ private fun WeekPager(
                     glow = true,
                     todayFraction = todayFraction,
                     modifier = Modifier.fillMaxWidth().height(220.dp),
+                    interactive = true,
+                    zone = zone,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -211,6 +213,14 @@ private fun WeekPager(
                     glow = true,
                     todayFraction = todayFraction,
                     modifier = Modifier.fillMaxWidth().height(220.dp),
+                    interactive = true,
+                    zone = zone,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Tap a point to see its date, time and percent.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceMuted,
                 )
             }
             Spacer(Modifier.height(12.dp))

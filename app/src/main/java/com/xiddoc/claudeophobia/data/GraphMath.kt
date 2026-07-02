@@ -23,6 +23,9 @@ data class CubicSeg(val p0: Vec2, val c1: Vec2, val c2: Vec2, val p3: Vec2)
 /** Progress gained per calendar day, anchored at the day's horizontal midpoint [xMid]. */
 data class DerivativePoint(val xMid: Float, val deltaPerDay: Float)
 
+/** A unit-square [pos] paired with the raw [sample] it came from, for tap hit-testing. */
+data class SamplePoint(val sample: Sample, val pos: Vec2)
+
 object GraphMath {
 
     private const val DAY_MS = 86_400_000L
@@ -38,18 +41,26 @@ object GraphMath {
      * divides by a zero or negative span. Samples sharing a timestamp are collapsed
      * (last wins) so the Bezier pass never sees a zero-width step.
      */
-    fun toPoints(samples: List<Sample>, weekStartMs: Long, weekEndMs: Long): List<Vec2> {
+    fun toPoints(samples: List<Sample>, weekStartMs: Long, weekEndMs: Long): List<Vec2> =
+        toSamplePoints(samples, weekStartMs, weekEndMs).map { it.pos }
+
+    /**
+     * Like [toPoints], but keeps each unit-square position paired with the raw
+     * [Sample] behind it (after the same coincident-timestamp collapse). Renderers
+     * use this to map a tap back to the exact recorded point — its timestamp and
+     * percent — without re-deriving the mapping and risking a mismatch with the
+     * curve. Same degenerate-week and non-finite guards as [toPoints].
+     */
+    fun toSamplePoints(samples: List<Sample>, weekStartMs: Long, weekEndMs: Long): List<SamplePoint> {
         if (weekEndMs <= weekStartMs || samples.isEmpty()) return emptyList()
         val span = (weekEndMs - weekStartMs).toDouble()
         val collapsed = LinkedHashMap<Long, Sample>()
         for (s in samples.sortedBy { it.tsMs }) collapsed[s.tsMs] = s
-        return collapsed.values
-            .map { s ->
-                val x = ((s.tsMs - weekStartMs).toDouble() / span).coerceIn(0.0, 1.0).toFloat()
-                val y = s.pct.coerceIn(0, 100) / 100f
-                Vec2(x, y)
-            }
-            .filter { it.x.isFinite() && it.y.isFinite() }
+        return collapsed.values.mapNotNull { s ->
+            val x = ((s.tsMs - weekStartMs).toDouble() / span).coerceIn(0.0, 1.0).toFloat()
+            val y = s.pct.coerceIn(0, 100) / 100f
+            if (x.isFinite() && y.isFinite()) SamplePoint(s, Vec2(x, y)) else null
+        }
     }
 
     /**

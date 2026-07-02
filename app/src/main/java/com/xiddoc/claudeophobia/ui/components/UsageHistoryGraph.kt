@@ -1,8 +1,10 @@
 package com.xiddoc.claudeophobia.ui.components
 
 import android.graphics.BlurMaskFilter
+import android.graphics.RectF
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,10 +16,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
@@ -29,26 +36,44 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.xiddoc.claudeophobia.data.GraphMath
+import com.xiddoc.claudeophobia.data.SamplePoint
 import com.xiddoc.claudeophobia.data.WeekBucket
 import com.xiddoc.claudeophobia.ui.theme.ClaudeClay
 import com.xiddoc.claudeophobia.ui.theme.ClaudeClayBright
 import com.xiddoc.claudeophobia.ui.theme.ClaudeGlow
 import com.xiddoc.claudeophobia.ui.theme.DangerRed
+import com.xiddoc.claudeophobia.ui.theme.OnBackground
 import com.xiddoc.claudeophobia.ui.theme.OnSurfaceMuted
+import com.xiddoc.claudeophobia.ui.theme.Surface
 import com.xiddoc.claudeophobia.ui.theme.TrackColor
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+/** The horizontal gridlines drawn behind the curve, as unit-square y values (0%..100%). */
+private val GRID_LEVELS = listOf(0.25f, 0.5f, 0.75f, 1f)
+
+private val TOOLTIP_FMT = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault())
 
 /**
  * The in-app weekly-progress graph: a slightly Bezier-curved progress line with an
- * optional "gained per day" derivative overlay, sample dots, and a "now" marker for
- * the current week. Shares the exact [GraphMath] geometry with the home-screen
- * widget's bitmap renderer, so the two can never disagree — only the canvas differs.
+ * optional "gained per day" derivative overlay, sample dots, faint percentage
+ * gridlines, and a "now" marker for the current week. Shares the exact [GraphMath]
+ * geometry with the home-screen widget's bitmap renderer, so the two can never
+ * disagree — only the canvas differs.
  *
  * The risky numeric work (0/1/2 points, NaN, gaps, overshoot) all lives in
  * [GraphMath]; this composable only maps the 0..1 unit square into pixels (y is
  * flipped) and strokes it. Empty / single-sample weeks are handled by the caller,
  * which shows explanatory copy instead of a bare canvas.
+ *
+ * When [interactive] is set, tapping near a recorded sample pins a callout showing
+ * that point's date/time (in [zone]) and percent; tapping empty space dismisses it.
  */
 @Composable
 fun UsageHistoryGraph(
@@ -58,8 +83,49 @@ fun UsageHistoryGraph(
     glow: Boolean,
     todayFraction: Float?,
     modifier: Modifier = Modifier,
+    interactive: Boolean = false,
+    zone: ZoneId = ZoneId.systemDefault(),
 ) {
-    Canvas(modifier = modifier.fillMaxWidth()) {
+    // Sample-aligned points (raw Sample + unit-square position) power both the dots
+    // and tap hit-testing, so a selection can never drift from the drawn curve.
+    val samplePoints = remember(week) {
+        GraphMath.toSamplePoints(
+            week?.samples.orEmpty(),
+            week?.weekStartMs ?: 0L,
+            week?.weekEndMs ?: 0L,
+        )
+    }
+    // Reset any pinned callout when the week (i.e. the pager page) changes.
+    var selected by remember(week) { mutableStateOf<SamplePoint?>(null) }
+
+    val tapModifier = if (interactive && samplePoints.isNotEmpty()) {
+        Modifier.pointerInput(samplePoints) {
+            detectTapGestures { tap ->
+                val padX = size.width * 0.02f
+                val padY = size.height * 0.08f
+                val contentW = (size.width - 2 * padX).coerceAtLeast(1f)
+                val contentH = (size.height - 2 * padY).coerceAtLeast(1f)
+                fun sx(x: Float) = padX + x.coerceIn(0f, 1f) * contentW
+                fun sy(y: Float) = padY + (1f - y.coerceIn(0f, 1f)) * contentH
+                val nearest = samplePoints.minByOrNull { sp ->
+                    val dx = tap.x - sx(sp.pos.x)
+                    val dy = tap.y - sy(sp.pos.y)
+                    dx * dx + dy * dy
+                }
+                // Only pin when the tap lands reasonably close; otherwise dismiss.
+                val hitRadiusPx = 40.dp.toPx()
+                selected = nearest?.takeIf { sp ->
+                    val dx = tap.x - sx(sp.pos.x)
+                    val dy = tap.y - sy(sp.pos.y)
+                    dx * dx + dy * dy <= hitRadiusPx * hitRadiusPx
+                }
+            }
+        }
+    } else {
+        Modifier
+    }
+
+    Canvas(modifier = modifier.fillMaxWidth().then(tapModifier)) {
         val padX = size.width * 0.02f
         val padY = size.height * 0.08f
         val left = padX
@@ -76,6 +142,30 @@ fun UsageHistoryGraph(
             end = Offset(left + contentW, py(0f)),
             strokeWidth = 2.dp.toPx(),
         )
+
+        // Faint percentage gridlines (25/50/75/100%) so it's easy to read off where
+        // any point on the curve sits, with a small label at the left of each.
+        val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = OnSurfaceMuted.copy(alpha = 0.6f).toArgb()
+            textSize = 9.sp.toPx()
+        }
+        for (level in GRID_LEVELS) {
+            val y = py(level)
+            drawLine(
+                color = OnSurfaceMuted.copy(alpha = 0.12f),
+                start = Offset(left, y),
+                end = Offset(left + contentW, y),
+                strokeWidth = 1.dp.toPx(),
+            )
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawText(
+                    "${(level * 100).toInt()}%",
+                    left + 2.dp.toPx(),
+                    y - 2.dp.toPx(),
+                    labelPaint,
+                )
+            }
+        }
 
         val samples = week?.samples.orEmpty()
         val start = week?.weekStartMs ?: 0L
@@ -107,7 +197,7 @@ fun UsageHistoryGraph(
                     drawRect(
                         color = color,
                         topLeft = Offset(cx - barW / 2f, topY),
-                        size = androidx.compose.ui.geometry.Size(barW, h),
+                        size = Size(barW, h),
                     )
                 }
             }
@@ -143,6 +233,21 @@ fun UsageHistoryGraph(
                 end = Offset(x, top + contentH),
                 strokeWidth = 1.dp.toPx(),
             )
+        }
+
+        // Pinned selection: highlight the point and float its date/time + percent.
+        selected?.let { sp ->
+            val cx = px(sp.pos.x)
+            val cy = py(sp.pos.y)
+            drawCircle(color = ClaudeGlow, radius = 5.dp.toPx(), center = Offset(cx, cy))
+            drawCircle(
+                color = ClaudeClay,
+                radius = 8.dp.toPx(),
+                center = Offset(cx, cy),
+                style = Stroke(width = 2.dp.toPx()),
+            )
+            val label = "${TOOLTIP_FMT.format(Instant.ofEpochMilli(sp.sample.tsMs).atZone(zone))}  ·  ${sp.sample.pct}%"
+            drawTooltip(label, cx, cy, left, left + contentW, top)
         }
     }
 }
@@ -185,8 +290,71 @@ fun GraphLegend(
     }
 }
 
+/**
+ * Floats a small rounded callout with [text] just above ([cx],[cy]), clamped to
+ * stay within [leftBound]..[rightBound] horizontally and nudged below the point if
+ * there isn't room above ([topBound]).
+ */
+private fun DrawScope.drawTooltip(
+    text: String,
+    cx: Float,
+    cy: Float,
+    leftBound: Float,
+    rightBound: Float,
+    topBound: Float,
+) {
+    val textPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = OnBackground.toArgb()
+        textSize = 11.sp.toPx()
+    }
+    val padH = 8.dp.toPx()
+    val padV = 5.dp.toPx()
+    val textW = textPaint.measureText(text)
+    val fm = textPaint.fontMetrics
+    val textH = fm.descent - fm.ascent
+    val boxW = textW + 2 * padH
+    val boxH = textH + 2 * padV
+    val gap = 12.dp.toPx()
+
+    val boxLeft = (cx - boxW / 2f).coerceIn(leftBound, (rightBound - boxW).coerceAtLeast(leftBound))
+    var boxTop = cy - gap - boxH
+    if (boxTop < topBound) boxTop = cy + gap // not enough room above; drop below the point
+
+    drawRoundRect(
+        color = Surface.copy(alpha = 0.95f),
+        topLeft = Offset(boxLeft, boxTop),
+        size = Size(boxW, boxH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+    )
+    drawRoundRect(
+        color = ClaudeClay.copy(alpha = 0.6f),
+        topLeft = Offset(boxLeft, boxTop),
+        size = Size(boxW, boxH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+        style = Stroke(width = 1.dp.toPx()),
+    )
+    drawIntoCanvas { canvas ->
+        canvas.nativeCanvas.drawText(
+            text,
+            boxLeft + padH,
+            boxTop + padV - fm.ascent,
+            textPaint,
+        )
+    }
+}
+
 /** Warm blurred bloom under the curve — the ProgressRing/LinearMeter LED recipe. */
 private fun DrawScope.drawGraphGlow(path: Path, strokePx: Float) {
+    val androidPath = path.asAndroidPath()
+    // A perfectly flat curve — every sample at the same percent, most commonly a
+    // whole week sitting at 0% — has a zero-height bounding box. Blurring that
+    // degenerate path smears a broken band across the graph (and crashes the mask
+    // allocation on some devices), so skip the bloom and let the plain line show.
+    val bounds = RectF()
+    @Suppress("DEPRECATION") // single-arg overload isn't in the compileSdk 35 stubs
+    androidPath.computeBounds(bounds, true)
+    if (bounds.height() < 1f || bounds.width() < 1f) return
+
     drawIntoCanvas { canvas ->
         val paint = Paint().asFrameworkPaint().apply {
             isAntiAlias = true
@@ -200,7 +368,6 @@ private fun DrawScope.drawGraphGlow(path: Path, strokePx: Float) {
             8.dp.toPx() to ClaudeClayBright.copy(alpha = 0.55f),
             4.dp.toPx() to ClaudeGlow.copy(alpha = 0.75f),
         )
-        val androidPath = path.asAndroidPath()
         layers.forEach { (radius, color) ->
             paint.color = color.toArgb()
             paint.maskFilter = BlurMaskFilter(radius, BlurMaskFilter.Blur.NORMAL)

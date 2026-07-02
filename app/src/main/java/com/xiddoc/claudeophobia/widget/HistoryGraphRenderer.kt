@@ -30,6 +30,10 @@ object HistoryGraphRenderer {
     private const val DERIV_POS = 0x66D97757
     private const val DERIV_NEG = 0x80E5806B.toInt() // alpha 0x80 pushes past Int range
     private const val ZERO_LINE = 0x33A39B8D
+    private const val GRID_LINE = 0x1FA39B8D // faint percentage gridlines (25/50/75/100%)
+
+    /** Percentage gridlines drawn behind the curve, as unit-square y values. */
+    private val GRID_LEVELS = floatArrayOf(0.25f, 0.5f, 0.75f, 1f)
 
     fun render(
         widthPx: Int,
@@ -60,6 +64,17 @@ object HistoryGraphRenderer {
             color = TRACK
         }
         canvas.drawLine(left, py(0f), left + contentW, py(0f), trackPaint)
+
+        // Faint percentage gridlines (25/50/75/100%) for easier reading.
+        val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 1f
+            color = GRID_LINE
+        }
+        for (level in GRID_LEVELS) {
+            val y = py(level)
+            canvas.drawLine(left, y, left + contentW, y, gridPaint)
+        }
 
         val samples = week?.samples.orEmpty()
         val start = week?.weekStartMs ?: 0L
@@ -131,6 +146,13 @@ object HistoryGraphRenderer {
 
     /** Warm blurred bloom under the curve — the ProgressRing/LinearMeter recipe. */
     private fun drawGlow(canvas: Canvas, path: Path, stroke: Float) {
+        // A perfectly flat curve (e.g. a whole week at 0%) has a zero-height bounding
+        // box; blurring it smears a broken band and can fault the mask allocation.
+        val bounds = android.graphics.RectF()
+        @Suppress("DEPRECATION") // single-arg overload isn't in the compileSdk 35 stubs
+        path.computeBounds(bounds, true)
+        if (bounds.height() < 1f || bounds.width() < 1f) return
+
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
