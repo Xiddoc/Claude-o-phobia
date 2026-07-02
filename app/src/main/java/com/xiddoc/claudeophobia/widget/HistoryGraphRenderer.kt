@@ -122,8 +122,8 @@ object HistoryGraphRenderer {
             }
         }
 
-        // The progress curve.
-        val segs = GraphMath.smoothPath(points, tension)
+        // The progress curve — noise-smoothed (moving average) before the Bezier pass.
+        val segs = GraphMath.smoothPath(GraphMath.smoothedPoints(points, tension), tension)
         if (segs.isNotEmpty()) {
             val path = Path().apply {
                 moveTo(px(segs.first().p0.x), py(segs.first().p0.y))

@@ -63,6 +63,41 @@ object GraphMath {
         }
     }
 
+    /** At the widest smoothing (tension 1) the moving-average window spans this fraction of the points. */
+    const val SMOOTH_MAX_FRACTION = 0.06f
+
+    /**
+     * A centered moving average over the [points]' y values (x is preserved), used
+     * to tame a noisy sampling cadence *before* [smoothPath] draws the curve — the
+     * Catmull-Rom pass alone can't, since it interpolates through every point. The
+     * window scales with both [tension] (the Straight/Slight/Smooth preset) and the
+     * point count via [SMOOTH_MAX_FRACTION], so dense weeks get real smoothing while
+     * a sparse week (a handful of points) is left essentially untouched. The raw
+     * sample dots are still drawn from the unsmoothed points, so actual values stay
+     * visible under the smoothed trend.
+     *
+     * Averages the y-only so points never shuffle in x. Returns [points] unchanged
+     * for tension 0, fewer than 3 points, or a sub-1 window. Callers must smooth a
+     * single contiguous series (e.g. one week) — never across a reset boundary,
+     * which would blend a 100%→0% drop into a false ramp.
+     */
+    fun smoothedPoints(points: List<Vec2>, tension: Float): List<Vec2> {
+        val n = points.size
+        val t = tension.coerceIn(0f, 1f)
+        if (n < 3 || t <= 0f) return points
+        val half = (t * SMOOTH_MAX_FRACTION * n).toInt()
+        if (half < 1) return points
+        val out = ArrayList<Vec2>(n)
+        for (i in 0 until n) {
+            val lo = (i - half).coerceAtLeast(0)
+            val hi = (i + half).coerceAtMost(n - 1)
+            var sum = 0f
+            for (j in lo..hi) sum += points[j].y
+            out.add(Vec2(points[i].x, sum / (hi - lo + 1)))
+        }
+        return out
+    }
+
     /**
      * A Catmull-Rom spline through [points], expressed as cubic Bezier segments so
      * either canvas can stroke it directly. [tension] (0 = straight polyline,
@@ -198,4 +233,12 @@ object GraphMath {
         return weeks.firstOrNull { it.weekStartMs == pinned }
             ?: weeks.minByOrNull { abs(it.weekStartMs - pinned) }
     }
+
+    /**
+     * The most recent [count] weeks (ascending, current week last) for the
+     * multi-week range views. A non-positive [count] means "all". Never returns more
+     * weeks than exist, so an all-time view on a short history just shows everything.
+     */
+    fun weeksForRange(weeks: List<WeekBucket>, count: Int): List<WeekBucket> =
+        if (count <= 0 || count >= weeks.size) weeks else weeks.takeLast(count)
 }

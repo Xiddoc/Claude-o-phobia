@@ -1,5 +1,6 @@
 package com.xiddoc.claudeophobia.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,32 +12,45 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.xiddoc.claudeophobia.data.AppSettings
+import com.xiddoc.claudeophobia.data.GraphMath
 import com.xiddoc.claudeophobia.data.WeekBucket
 import com.xiddoc.claudeophobia.data.bucketsFor
 import com.xiddoc.claudeophobia.data.weekKeyFor
 import com.xiddoc.claudeophobia.ui.MainViewModel
 import com.xiddoc.claudeophobia.ui.components.GraphLegend
 import com.xiddoc.claudeophobia.ui.components.InfoCard
+import com.xiddoc.claudeophobia.ui.components.RangeGainGraph
+import com.xiddoc.claudeophobia.ui.components.RangeHistoryGraph
 import com.xiddoc.claudeophobia.ui.components.UsageHistoryGraph
 import com.xiddoc.claudeophobia.ui.components.WeeklyGainGraph
+import com.xiddoc.claudeophobia.ui.theme.ClaudeClay
 import com.xiddoc.claudeophobia.ui.theme.OnSurfaceMuted
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -46,11 +60,24 @@ import java.util.Locale
 private val DAY_FMT = DateTimeFormatter.ofPattern("MMM d", Locale.getDefault())
 
 /**
- * The full weekly-progress history: a swipeable pager over every recorded week,
- * oldest on the left and the current week on the right. Each page draws the same
- * curved [UsageHistoryGraph] as the home card. The pager's own bounds make it
- * impossible to swipe into the future or before the earliest data, satisfying the
- * navigation constraint structurally.
+ * How much history to show at once. [WEEK] keeps the familiar swipeable one-week
+ * pager; the longer ranges concatenate the most recent [weeks] onto a single
+ * continuous time axis (0 = all of it) so the gained/day derivative can be read
+ * across week boundaries. The progress line still sawtooths 0→~100 each week — that
+ * jump is the reset, and seeing it is the point.
+ */
+private enum class HistoryRange(val label: String, val weeks: Int) {
+    WEEK("Week", 1),
+    FOUR("4 wks", 4),
+    TWELVE("12 wks", 12),
+    ALL("All", 0),
+}
+
+/**
+ * The full weekly-progress history. A range selector switches between the swipeable
+ * one-week pager (oldest left, current week right — its bounds make it impossible to
+ * swipe into the future or before the earliest data) and continuous multi-week views
+ * that stack the same [GraphMath] geometry as one uninterrupted trend.
  */
 @Composable
 fun HistoryScreen(
@@ -64,6 +91,7 @@ fun HistoryScreen(
     val weeks = remember(history, settings.resetConfig) {
         bucketsFor(history, settings.resetConfig)
     }
+    var range by rememberSaveable { mutableStateOf(HistoryRange.WEEK) }
 
     Box(
         modifier = Modifier
@@ -105,16 +133,106 @@ fun HistoryScreen(
                     )
                 }
             } else {
-                WeekPager(weeks = weeks, settings = settings, nowMs = now.toEpochMilli())
+                RangeSelector(selected = range, onSelect = { range = it })
+                Spacer(Modifier.height(12.dp))
+                if (range == HistoryRange.WEEK) {
+                    WeekPager(weeks = weeks, settings = settings, nowMs = now.toEpochMilli())
+                } else {
+                    RangeView(
+                        allWeeks = weeks,
+                        range = range,
+                        settings = settings,
+                        nowMs = now.toEpochMilli(),
+                    )
+                }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RangeSelector(
+    selected: HistoryRange,
+    onSelect: (HistoryRange) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        HistoryRange.entries.forEach { r ->
+            FilterChip(
+                selected = r == selected,
+                onClick = { onSelect(r) },
+                label = {
+                    Text(r.label, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                },
+                modifier = Modifier.weight(1f),
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = ClaudeClay,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            )
+        }
+    }
+}
+
+/** The continuous multi-week view: one progress trend + a continuous gained/day chart. */
+@Composable
+private fun RangeView(
+    allWeeks: List<WeekBucket>,
+    range: HistoryRange,
+    settings: AppSettings,
+    nowMs: Long,
+) {
+    val weeks = remember(allWeeks, range) { GraphMath.weeksForRange(allWeeks, range.weeks) }
+    if (weeks.isEmpty()) return
+    val zone = settings.resetConfig.zone
+    val currentKey = remember(weeks, nowMs, settings.resetConfig) {
+        weekKeyFor(nowMs, settings.resetConfig)
+    }
+    // "Now" marker fraction across the whole range, only while the newest shown week
+    // is the current one. Quantized so the once-a-second clock doesn't re-rasterize.
+    val globalStart = weeks.first().weekStartMs
+    val globalEnd = weeks.last().weekEndMs
+    val nowFraction = if (weeks.last().weekStartMs == currentKey && globalEnd > globalStart) {
+        val raw = ((nowMs - globalStart).toDouble() / (globalEnd - globalStart)).coerceIn(0.0, 1.0)
+        (raw * 400).toInt() / 400f
+    } else {
+        null
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState()),
+    ) {
+        val start = Instant.ofEpochMilli(globalStart).atZone(zone).format(DAY_FMT)
+        val end = Instant.ofEpochMilli(globalEnd).atZone(zone).format(DAY_FMT)
+        Text(
+            text = "$start – $end  ·  ${weeks.size} weeks",
+            style = MaterialTheme.typography.bodySmall,
+            color = OnSurfaceMuted,
+        )
+        Spacer(Modifier.height(12.dp))
+        RangeHistoryGraph(
+            weeks = weeks,
+            tension = settings.graphCurveTension,
+            glow = true,
+            nowFraction = nowFraction,
+            modifier = Modifier.fillMaxWidth().height(220.dp),
+        )
+        Spacer(Modifier.height(12.dp))
+        GraphLegend()
+        if (settings.showDerivative) {
+            Spacer(Modifier.height(16.dp))
+            RangeGainGraph(weeks = weeks, modifier = Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(16.dp))
     }
 }
 
 @Composable
 private fun WeekPager(
     weeks: List<WeekBucket>,
-    settings: com.xiddoc.claudeophobia.data.AppSettings,
+    settings: AppSettings,
     nowMs: Long,
 ) {
     val pagerState = rememberPagerState(

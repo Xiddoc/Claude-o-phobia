@@ -63,6 +63,47 @@ class GraphMathTest {
         assertTrue(GraphMath.toSamplePoints(emptyList(), W0, W1).isEmpty())
     }
 
+    // --- smoothedPoints ---------------------------------------------------
+
+    @Test
+    fun smoothedPointsLeavesShortOrStraightSeriesUntouched() {
+        val pts = (0..10).map { Vec2(it / 10f, if (it % 2 == 0) 1f else 0f) }
+        // Tension 0 (Straight) never averages.
+        assertEquals(pts, GraphMath.smoothedPoints(pts, 0f))
+        // Fewer than 3 points is returned as-is regardless of tension.
+        val two = listOf(Vec2(0f, 0f), Vec2(1f, 1f))
+        assertEquals(two, GraphMath.smoothedPoints(two, 1f))
+    }
+
+    @Test
+    fun smoothedPointsKeepsXAndReducesZigZagVariance() {
+        // A saw-tooth 0/1/0/1… of enough points that the window is >= 1.
+        val n = 400
+        val pts = (0 until n).map { Vec2(it / (n - 1f), if (it % 2 == 0) 1f else 0f) }
+        val sm = GraphMath.smoothedPoints(pts, 1f)
+        assertEquals(n, sm.size)
+        // x is preserved exactly; y is pulled toward the 0.5 mean (variance shrinks).
+        for (i in pts.indices) assertEquals(pts[i].x, sm[i].x, 1e-6f)
+        fun variance(v: List<Vec2>): Float {
+            val mean = v.map { it.y }.average().toFloat()
+            return v.map { (it.y - mean) * (it.y - mean) }.average().toFloat()
+        }
+        assertTrue("smoothed variance ${variance(sm)} < raw ${variance(pts)}", variance(sm) < variance(pts))
+        // Interior points stay finite and within the data's [0,1] envelope.
+        assertTrue(sm.all { it.y in 0f..1f })
+    }
+
+    // --- weeksForRange ----------------------------------------------------
+
+    @Test
+    fun weeksForRangeTakesMostRecentOrAll() {
+        val w = weeks(100, 200, 300, 400)
+        assertEquals(listOf(300L, 400L), GraphMath.weeksForRange(w, 2).map { it.weekStartMs })
+        assertEquals(w, GraphMath.weeksForRange(w, 0))            // 0 = all
+        assertEquals(w, GraphMath.weeksForRange(w, 99))           // more than exist = all
+        assertTrue(GraphMath.weeksForRange(emptyList(), 4).isEmpty())
+    }
+
     // --- smoothPath -------------------------------------------------------
 
     @Test
